@@ -4,8 +4,6 @@ import {
     type INodeTypeDescription,
     type INodePropertyOptions,
     type IExecuteFunctions,
-    type INodeParameters,
-    INodeOutputConfiguration,
     NodeOperationError,
     NodeConnectionType,
 } from 'n8n-workflow';
@@ -70,21 +68,6 @@ export interface IDiscordNodeActionParameters {
 }
 
 
-const configuredOutputs = (parameters: INodeParameters) => {
-    const mode = parameters.type as string;
-
-    if (mode === 'confirm') {
-        return [
-            { displayName: 'confirm', type: 'main' },
-            { displayName: 'cancel', type: 'main' },
-            { displayName: 'no response', type: 'main' },
-        ] as INodeOutputConfiguration[];
-    } else {
-        return [{ type: 'main' }] as INodeOutputConfiguration[];
-    }
-};
-
-
 export class DiscordInteraction implements INodeType {
     description: INodeTypeDescription = {
         displayName: 'Discord Interaction',
@@ -96,8 +79,8 @@ export class DiscordInteraction implements INodeType {
             name: 'Discord Interaction',
         },
         icon: 'file:discord-logo.svg',
-        inputs: ['main'],
-        outputs: `={{(${configuredOutputs})($parameter)}}`,
+        inputs: ['main'] as NodeConnectionType[],
+        outputs: ['main'] as NodeConnectionType[],
         credentials: [
             {
                 name: 'discordBotTriggerApi',
