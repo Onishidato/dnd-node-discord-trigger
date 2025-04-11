@@ -1,0 +1,69 @@
+{
+  "name": "dnd-nodes-discord-trigger",
+  "version": "0.3.1",
+  "description": "A node that triggers a workflow whenever a message from discord is sent.",
+  "keywords": [
+    "n8n",
+    "node",
+    "discord",
+    "trigger",
+    "n8n-node",
+    "n8n-community-node-package"
+  ],
+  "license": "MIT",
+  "homepage": "",
+  "author": {
+    "name": "onishidato",
+    "email": "onishidato@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/katerlol/n8n-discord-trigger"
+  },
+  "engines": {
+    "node": ">=18.10",
+    "pnpm": ">=9.1"
+  },
+  "packageManager": "pnpm@9.1.4",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && gulp build:icons",
+    "dev": "tsc --watch",
+    "format": "prettier nodes credentials --write",
+    "lint": "eslint nodes credentials package.json",
+    "lintfix": "eslint nodes credentials package.json --fix",
+    "prepublishOnly": "pnpm build && pnpm lint -c .eslintrc.prepublish.js nodes credentials package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/DiscordBotTriggerApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/DiscordTrigger/DiscordTrigger.node.js",
+      "dist/nodes/DiscordInteraction/DiscordInteraction.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^7.15.0",
+    "eslint": "^8.56.0",
+    "eslint-plugin-n8n-nodes-base": "^1.16.1",
+    "gulp": "^4.0.2",
+    "n8n-core": "^0.125.0",
+    "n8n-workflow": "^1.82.0",
+    "prettier": "^3.3.2",
+    "typescript": "^5.5.3"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "dependencies": {
+    "@types/node-ipc": "^9.2.3",
+    "axios": "^1.7.9",
+    "discord.js": "^14.17.3",
+    "node-ipc": "^12.0.0"
+  }
+}
