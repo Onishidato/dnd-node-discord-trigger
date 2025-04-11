@@ -17,6 +17,11 @@ import {
 import settings from './settings';
 import { IDiscordInteractionMessageParameters, IDiscordNodeActionParameters } from './DiscordInteraction/DiscordInteraction.node';
 
+// Extend the Discord Message type to include our custom property
+interface ExtendedMessage extends Message<boolean> {
+    processedContent?: string;
+}
+
 export default function () {
     const client = new Client({
         intents: [
@@ -110,10 +115,11 @@ export default function () {
                             .replace(/-/g, '\\x2d');
 
                         const clientId = client.user?.id;
-                        // Improved bot mention detection - check both for @mentions and for <@!clientId> pattern
+
+                        // Improved bot mention detection with regex to catch all variations
+                        const mentionRegex = new RegExp(`<@!?${clientId}>|<@${clientId}>`, 'g');
                         const botMention = message.mentions.users.some((user: any) => user.id === clientId) || 
-                                           message.content.includes(`<@${clientId}>`) || 
-                                           message.content.includes(`<@!${clientId}>`);
+                                           mentionRegex.test(message.content);
                         
                         // Check if message contains image attachments for image processing patterns
                         const hasImageAttachments = message.attachments.some(attachment => {
@@ -149,6 +155,17 @@ export default function () {
                         if ((pattern === "botMention" && botMention) || 
                             (pattern === "containImage" && hasImageAttachments) ||
                             (pattern !== "botMention" && pattern !== "containImage" && reg.test(message.content))) {
+                            
+                            // For bot mentions, make a clean copy of the message content with the mention removed
+                            // This helps when we want to process commands that start with a mention
+                            let processedContent = message.content;
+                            if (pattern === "botMention" && botMention) {
+                                // Remove bot mention patterns from the content
+                                processedContent = message.content.replace(mentionRegex, '').trim();
+                                // Add the processed content to the message object that will be sent to n8n
+                                (message as ExtendedMessage).processedContent = processedContent;
+                            }
+                            
                             console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}`);
                             
                             // Emit the message data to n8n

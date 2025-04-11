@@ -125,6 +125,8 @@ export class DiscordTrigger implements INodeType {
                     const messageCreateOptions = {
                         id: message.id,
                         content: message.content,
+                        // Add the processed content that has any bot mentions removed
+                        processedContent: message.processedContent || message.content,
                         channelId: message.channelId,
                         authorId: author.id,
                         authorName: author.username,
