@@ -96,7 +96,7 @@ export class DiscordInteraction implements INodeType {
             name: 'Discord Interaction',
         },
         icon: 'file:discord-logo.svg',
-        inputs: [NodeConnectionType.Main],
+        inputs: ['main'],
         outputs: `={{(${configuredOutputs})($parameter)}}`,
         credentials: [
             {
