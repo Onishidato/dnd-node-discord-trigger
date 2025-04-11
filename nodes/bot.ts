@@ -1,4 +1,3 @@
-
 import {
     Client, GatewayIntentBits, ChannelType, Guild,
     EmbedBuilder,
@@ -111,14 +110,17 @@ export default function () {
                             .replace(/-/g, '\\x2d');
 
                         const clientId = client.user?.id;
-                        const botMention = message.mentions.users.some((user: any) => user.id === clientId);
+                        // Improved bot mention detection - check both for @mentions and for <@!clientId> pattern
+                        const botMention = message.mentions.users.some((user: any) => user.id === clientId) || 
+                                           message.content.includes(`<@${clientId}>`) || 
+                                           message.content.includes(`<@!${clientId}>`);
 
                         let regStr = `^${escapedTriggerValue}$`;
 
                         // return if we expect a bot mention, but bot is not mentioned
-                        if (pattern === "botMention" && !botMention)
+                        if (pattern === "botMention" && !botMention) {
                             continue;
-
+                        }
                         else if (pattern === "start" && message.content)
                             regStr = `^${escapedTriggerValue}`;
                         else if (pattern === 'end')
@@ -132,7 +134,12 @@ export default function () {
 
                         const reg = new RegExp(regStr, parameters.caseSensitive ? '' : 'i');
 
-                        if ((pattern === "botMention" && botMention) || reg.test(message.content)) {
+                        // If pattern is botMention, we've already checked it, so we can trigger
+                        // Otherwise, check if the content matches the regex
+                        if ((pattern === "botMention" && botMention) || 
+                            (pattern !== "botMention" && reg.test(message.content))) {
+                            console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}`);
+                            
                             // Emit the message data to n8n
                             ipc.server.emit(socket, 'messageCreate', {
                                 message,
