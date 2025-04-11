@@ -106,6 +106,22 @@ export class DiscordTrigger implements INodeType {
             ipc.of.bot.on('messageCreate', ({ message, author, nodeId, messageReference, referenceAuthor }: any) => {
                 if( this.getNode().id === nodeId) {
                     
+                    // Check if any attachments are images
+                    const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
+                        const contentType = attachment.contentType?.toLowerCase() || '';
+                        return contentType.startsWith('image/');
+                    }) : [];
+                    
+                    // Format image data specifically for Google Gemini 2.0 Flash
+                    const geminiReadyImages = imageAttachments.map((attachment: any) => ({
+                        url: attachment.url,
+                        mimeType: attachment.contentType,
+                        // Adding fields that Gemini might need
+                        width: attachment.width,
+                        height: attachment.height,
+                        size: attachment.size
+                    }));
+
                     const messageCreateOptions = {
                         id: message.id,
                         content: message.content,
@@ -134,6 +150,14 @@ export class DiscordTrigger implements INodeType {
                             description: attachment.description,
                             ephemeral: attachment.ephemeral,
                         })) : [],
+                        // Add Gemini-specific fields for image analysis
+                        hasImages: imageAttachments.length > 0,
+                        imageCount: imageAttachments.length,
+                        geminiImages: geminiReadyImages,
+                        // Add a helper field with a sample prompt for Gemini
+                        geminiPromptTemplate: imageAttachments.length > 0 ? 
+                            "Analyze this image and describe what you see in detail." : 
+                            "No images attached to analyze."
                     }
 
                     if(messageReference) {

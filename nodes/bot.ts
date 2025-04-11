@@ -114,11 +114,21 @@ export default function () {
                         const botMention = message.mentions.users.some((user: any) => user.id === clientId) || 
                                            message.content.includes(`<@${clientId}>`) || 
                                            message.content.includes(`<@!${clientId}>`);
+                        
+                        // Check if message contains image attachments for image processing patterns
+                        const hasImageAttachments = message.attachments.some(attachment => {
+                            const contentType = attachment.contentType?.toLowerCase() || '';
+                            return contentType.startsWith('image/');
+                        });
 
                         let regStr = `^${escapedTriggerValue}$`;
 
                         // return if we expect a bot mention, but bot is not mentioned
                         if (pattern === "botMention" && !botMention) {
+                            continue;
+                        }
+                        // Continue if we expect an image but there's no image attachment
+                        else if (pattern === "containImage" && !hasImageAttachments) {
                             continue;
                         }
                         else if (pattern === "start" && message.content)
@@ -134,11 +144,12 @@ export default function () {
 
                         const reg = new RegExp(regStr, parameters.caseSensitive ? '' : 'i');
 
-                        // If pattern is botMention, we've already checked it, so we can trigger
+                        // If pattern is botMention or containImage, we've already checked it above
                         // Otherwise, check if the content matches the regex
                         if ((pattern === "botMention" && botMention) || 
-                            (pattern !== "botMention" && reg.test(message.content))) {
-                            console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}`);
+                            (pattern === "containImage" && hasImageAttachments) ||
+                            (pattern !== "botMention" && pattern !== "containImage" && reg.test(message.content))) {
+                            console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}`);
                             
                             // Emit the message data to n8n
                             ipc.server.emit(socket, 'messageCreate', {

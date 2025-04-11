@@ -89,6 +89,11 @@ export const options: INodeProperties[] = [
         description: 'Match the value in any position in the message',
       },
       {
+        name: 'Contains Image',
+        value: 'containImage',
+        description: 'Triggers when a message contains an image attachment (for use with Google Gemini or other image analysis AI)',
+      },
+      {
         name: 'Ends With',
         value: 'end',
         description: 'Match the message ending with the specified value',
