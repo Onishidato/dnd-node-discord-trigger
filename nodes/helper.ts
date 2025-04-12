@@ -18,20 +18,16 @@ export const connection = (credentials: ICredentials): Promise<string> => {
 
         const timeout = setTimeout(() => reject('timeout'), 15000);
 
+        // Configure IPC for Ubuntu environment
         ipc.config.retry = 1500;
+        ipc.config.silent = false; // Enable logs for debugging
+        ipc.config.socketRoot = '/tmp/';
+        ipc.config.appspace = '';
         
-        // Set IPC path based on operating system to fix connection issues
-        if (process.platform === 'win32') {
-            // For Windows
-            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
-        } else {
-            // For Unix-based systems (Linux, macOS)
-            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
-        }
-        
-        console.log(`IPC Socket Root (connection): ${ipc.config.socketRoot}, Platform: ${process.platform}`);
+        console.log(`IPC Client Configuration: Socket Root: ${ipc.config.socketRoot}, App space: ${ipc.config.appspace}`);
         
         ipc.connectTo('bot', () => {
+            console.log('Attempting to connect to IPC server at:', ipc.config.socketRoot + 'bot');
             ipc.of.bot.emit('credentials', credentials);
 
             ipc.of.bot.on('credentials', (data: string) => {

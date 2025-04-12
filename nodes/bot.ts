@@ -43,21 +43,15 @@ export default function () {
         console.log(`Logged in as ${client.user?.tag}`);
     });
 
-    // Configure IPC based on the operating system
+    // Configure IPC for Ubuntu environment
     ipc.config.id = 'bot';
     ipc.config.retry = 1500;
-    ipc.config.silent = true;
+    ipc.config.silent = false; // Enable logs for debugging
+    ipc.config.socketRoot = '/tmp/';
+    ipc.config.appspace = '';
+    ipc.config.unlink = true; // Clean up socket on exit
     
-    // Set IPC path based on operating system to fix connection issues
-    if (process.platform === 'win32') {
-        // For Windows
-        ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
-    } else {
-        // For Unix-based systems (Linux, macOS)
-        ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
-    }
-    
-    console.log(`IPC Socket Root: ${ipc.config.socketRoot}, Platform: ${process.platform}`);
+    console.log(`IPC Server Configuration: Socket Root: ${ipc.config.socketRoot}, App space: ${ipc.config.appspace}, ID: ${ipc.config.id}`);
 
     // nodes are executed in a child process, the Discord bot is executed in the main process
     // so it's not stopped when a node execution end
