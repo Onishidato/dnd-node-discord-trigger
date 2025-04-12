@@ -19,6 +19,18 @@ export const connection = (credentials: ICredentials): Promise<string> => {
         const timeout = setTimeout(() => reject('timeout'), 15000);
 
         ipc.config.retry = 1500;
+        
+        // Set IPC path based on operating system to fix connection issues
+        if (process.platform === 'win32') {
+            // For Windows
+            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
+        } else {
+            // For Unix-based systems (Linux, macOS)
+            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
+        }
+        
+        console.log(`IPC Socket Root (connection): ${ipc.config.socketRoot}, Platform: ${process.platform}`);
+        
         ipc.connectTo('bot', () => {
             ipc.of.bot.emit('credentials', credentials);
 
@@ -54,6 +66,14 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
             const timeout = setTimeout(() => resolve(''), 5000);
 
             ipc.config.retry = 1500;
+            
+            // Set IPC path based on operating system to fix connection issues
+            if (process.platform === 'win32') {
+                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
+            } else {
+                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
+            }
+            
             ipc.connectTo('bot', () => {
                 ipc.of.bot.emit('list:channels', guildIds);
 
@@ -104,6 +124,14 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
             const timeout = setTimeout(() => resolve(''), 5000);
 
             ipc.config.retry = 1500;
+            
+            // Set IPC path based on operating system to fix connection issues
+            if (process.platform === 'win32') {
+                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
+            } else {
+                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
+            }
+            
             ipc.connectTo('bot', () => {
                 ipc.of.bot.emit('list:guilds');
 
@@ -158,6 +186,14 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
             const timeout = setTimeout(() => resolve(''), 5000);
 
             ipc.config.retry = 1500;
+            
+            // Set IPC path based on operating system to fix connection issues
+            if (process.platform === 'win32') {
+                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
+            } else {
+                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
+            }
+            
             ipc.connectTo('bot', () => {
                 ipc.of.bot.emit('list:roles', selectedGuildIds);
 
@@ -214,6 +250,14 @@ export const checkWorkflowStatus = async (n8nApiUrl: String, apiToken: String, w
 export const ipcRequest = (type: string, parameters: any): Promise<any> => {
     return new Promise((resolve) => {
         ipc.config.retry = 1500;
+        
+        // Set IPC path based on operating system to fix connection issues
+        if (process.platform === 'win32') {
+            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
+        } else {
+            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
+        }
+        
         ipc.connectTo('bot', () => {
             ipc.of.bot.on(`callback:${type}`, (data: any) => {
                 console.log("response fired", data);

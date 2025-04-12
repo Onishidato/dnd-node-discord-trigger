@@ -43,11 +43,21 @@ export default function () {
         console.log(`Logged in as ${client.user?.tag}`);
     });
 
-
-
+    // Configure IPC based on the operating system
     ipc.config.id = 'bot';
     ipc.config.retry = 1500;
     ipc.config.silent = true;
+    
+    // Set IPC path based on operating system to fix connection issues
+    if (process.platform === 'win32') {
+        // For Windows
+        ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
+    } else {
+        // For Unix-based systems (Linux, macOS)
+        ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
+    }
+    
+    console.log(`IPC Socket Root: ${ipc.config.socketRoot}, Platform: ${process.platform}`);
 
     // nodes are executed in a child process, the Discord bot is executed in the main process
     // so it's not stopped when a node execution end
@@ -234,6 +244,23 @@ export default function () {
         ipc.server.on('list:guilds', (data: undefined, socket: any) => {
             try {
                 if (settings.ready) {
+                    console.log('===== DEBUG: GUILD LISTING =====');
+                    console.log(`Client ready status: ${client.isReady()}`);
+                    console.log(`Client has guilds cache: ${Boolean(client.guilds.cache)}`);
+                    console.log(`Client guilds cache size: ${client.guilds.cache.size}`);
+                    console.log(`Client application ID: ${client.application?.id || 'unknown'}`);
+                    
+                    if (client.guilds.cache.size === 0) {
+                        console.log('No guilds found in cache. Bot might not have the SERVER MEMBERS INTENT or hasn\'t been invited to any servers.');
+                        console.log('Bot invite URL should include the following scopes: bot, applications.commands');
+                        console.log('Bot permissions should include: Read Messages/View Channels, Send Messages, etc.');
+                    } else {
+                        console.log('Guilds found:');
+                        client.guilds.cache.forEach(guild => {
+                            console.log(`- ${guild.name} (${guild.id})`);
+                        });
+                    }
+                    console.log('===============================');
 
                     const guilds = client.guilds.cache ?? ([] as any);
                     const guildsList = guilds.map((guild: Guild) => {
@@ -244,9 +271,16 @@ export default function () {
                     });
 
                     ipc.server.emit(socket, 'list:guilds', guildsList);
+                } else {
+                    console.log('===== DEBUG: GUILD LISTING FAILED =====');
+                    console.log(`settings.ready: ${settings.ready}`);
+                    console.log(`client.isReady(): ${client.isReady()}`);
+                    console.log('======================================');
                 }
             } catch (e) {
+                console.log(`===== ERROR LISTING GUILDS =====`);
                 console.log(`${e}`);
+                console.log(`================================`);
             }
         });
 
@@ -282,6 +316,13 @@ export default function () {
 
         ipc.server.on('credentials', (data: ICredentials, socket: any) => {
             try {
+                console.log('===== DEBUG: CREDENTIALS HANDLER =====');
+                console.log(`Received credentials with clientId: ${data.clientId?.substring(0, 5)}...`);
+                console.log(`Has token: ${Boolean(data.token)}`);
+                console.log(`Current settings - login: ${settings.login}, ready: ${settings.ready}`);
+                console.log(`Current settings - clientId: ${settings.clientId?.substring(0, 5)}...`);
+                console.log('===================================');
+                
                 if (
                     (!settings.login && !settings.ready) ||
                     (settings.ready && (settings.clientId !== data.clientId || settings.token !== data.token))
@@ -289,6 +330,7 @@ export default function () {
                     if (data.token && data.clientId) {
                         settings.login = true;
                         client.destroy();
+                        console.log('Attempting to login with provided token...');
                         client
                             .login(data.token)
                             .then(() => {
@@ -299,11 +341,13 @@ export default function () {
                                 settings.login = false;
                                 settings.clientId = data.clientId;
                                 settings.token = data.token;
-                                console.log("Client token2: ", client.isReady());
+                                console.log("Client login successful: ", client.isReady());
+                                console.log(`Bot is in ${client.guilds.cache.size} servers/guilds`);
                                 ipc.server.emit(socket, 'credentials', 'ready');
                             })
                             .catch((e) => {
                                 settings.login = false;
+                                console.log('Login failed with error:', e);
                                 ipc.server.emit(socket, 'credentials', 'error');
                             });
                     } else {
@@ -320,6 +364,7 @@ export default function () {
                 console.log(`${e}`);
             }
         });
+
 
         ipc.server.on('send:message', async (nodeParameters: IDiscordInteractionMessageParameters, socket: any) => {
             try {
