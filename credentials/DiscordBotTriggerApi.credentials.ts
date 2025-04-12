@@ -3,7 +3,7 @@ import { IAuthenticateGeneric, ICredentialTestRequest, ICredentialType, INodePro
 export class DiscordBotTriggerApi implements ICredentialType {
 	name = 'discordBotTriggerApi';
 	displayName = 'Discord Bot Trigger API';
-	documentationUrl = 'https://github.com/katerlol/n8n-discord-trigger';
+	documentationUrl = 'https://github.com/onishidato/n8n-node-discord-trigger';
 	properties: INodeProperties[] = [
 		{
 			displayName: 'Client ID',
