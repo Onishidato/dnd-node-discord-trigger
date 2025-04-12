@@ -18,9 +18,9 @@ import settings from './settings';
 import { IDiscordInteractionMessageParameters, IDiscordNodeActionParameters } from './DiscordInteraction/DiscordInteraction.node';
 
 // Extend the Discord Message type to include our custom property
-interface ExtendedMessage extends Message<boolean> {
-    processedContent?: string;
-}
+// interface ExtendedMessage extends Message<boolean> {
+//     processedContent?: string;
+// }
 
 export default function () {
     const client = new Client({
@@ -162,15 +162,28 @@ export default function () {
                             if (pattern === "botMention" && botMention) {
                                 // Remove bot mention patterns from the content
                                 processedContent = message.content.replace(mentionRegex, '').trim();
-                                // Add the processed content to the message object that will be sent to n8n
-                                (message as ExtendedMessage).processedContent = processedContent;
+                                
+                                // IMPORTANT: Per Discord's documentation, bots always receive content for messages
+                                // where they are mentioned, regardless of privileged intents.
+                                // We're not adding a custom property, but directly modifying the message object
+                                // that will be sent to n8n with both the original content and processed content.
+                                
+                                console.log('===== BOT MENTION DEBUG =====');
+                                console.log(`Original message: "${message.content}"`);
+                                console.log(`Processed message: "${processedContent}"`);
+                                console.log('===========================');
                             }
                             
                             console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}`);
                             
                             // Emit the message data to n8n
+                            // Include processedContent directly in the message object we're sending
+                            // rather than trying to modify the original message object
                             ipc.server.emit(socket, 'messageCreate', {
-                                message,
+                                message: {
+                                    ...message,
+                                    processedContent: pattern === "botMention" ? processedContent : message.content
+                                },
                                 messageReference,
                                 referenceAuthor: messageReference?.author,
                                 author: message.author,

@@ -106,6 +106,15 @@ export class DiscordTrigger implements INodeType {
             ipc.of.bot.on('messageCreate', ({ message, author, nodeId, messageReference, referenceAuthor }: any) => {
                 if( this.getNode().id === nodeId) {
                     
+                    // Debug logging to check message content and processedContent
+                    console.log('===== DISCORD TRIGGER NODE DEBUG =====');
+                    console.log(`Received message with content: "${message.content}"`);
+                    console.log(`Has processedContent property: ${Boolean(message.processedContent)}`);
+                    if (message.processedContent) {
+                        console.log(`Processed content: "${message.processedContent}"`);
+                    }
+                    console.log('====================================');
+                    
                     // Check if any attachments are images
                     const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
                         const contentType = attachment.contentType?.toLowerCase() || '';
