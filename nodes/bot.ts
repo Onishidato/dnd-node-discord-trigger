@@ -17,6 +17,8 @@ import {
 import settings from './settings';
 import { IDiscordInteractionMessageParameters, IDiscordNodeActionParameters } from './DiscordInteraction/DiscordInteraction.node';
 import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 // Extend the Discord Message type to include our custom property
 
@@ -41,8 +43,15 @@ export default function () {
         console.log(`Logged in as ${client.user?.tag}`);
     });
 
+    // Create a more PM2-friendly socket path
+    // Using a unique filename in a consistent directory that PM2 can access
+    // We'll use the temp directory which is typically accessible by all processes
+    const tmpDir = os.tmpdir(); // Get system temp directory
+    const socketPath = path.join(tmpDir, 'n8n-discord-bot.sock');
+    
+    console.log(`Using socket path: ${socketPath}`);
+    
     // Clean up any existing socket file to prevent EADDRINUSE errors
-    const socketPath = '/tmp/bot';
     try {
         if (fs.existsSync(socketPath)) {
             fs.unlinkSync(socketPath);
@@ -52,18 +61,28 @@ export default function () {
         console.error(`Error cleaning up socket file: ${err}`);
     }
 
-    // Configure IPC for Unix environment
+    // Configure IPC for Unix environment with PM2 compatibility
     ipc.config.id = 'bot';
     ipc.config.retry = 1500;
     ipc.config.silent = false; // Enable logs for debugging
-    ipc.config.socketRoot = '/tmp/';
+    ipc.config.socketRoot = path.dirname(socketPath) + '/';
     ipc.config.appspace = '';
     ipc.config.unlink = true; // Clean up socket on exit
     ipc.config.maxRetries = 10; // Set maximum retries
     ipc.config.stopRetrying = false; // Don't stop retrying
     
-    console.log(`IPC Server Configuration: Socket Root: ${ipc.config.socketRoot}, App space: ${ipc.config.appspace}, ID: ${ipc.config.id}`);
-    console.log(`Expected socket path: ${socketPath}`);
+    console.log(`IPC Server Configuration: Socket Root: ${ipc.config.socketRoot}`);
+    console.log(`Expected socket full path: ${socketPath}`);
+
+    // Export the socket path so helper.ts can use it
+    // This is a hack but needed for PM2 compatibility
+    if (typeof global.__n8nDiscordSocketPath === 'undefined') {
+        Object.defineProperty(global, '__n8nDiscordSocketPath', {
+            value: socketPath,
+            writable: false,
+            configurable: false,
+        });
+    }
 
     // nodes are executed in a child process, the Discord bot is executed in the main process
     // so it's not stopped when a node execution end

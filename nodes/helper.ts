@@ -1,12 +1,30 @@
 import ipc from 'node-ipc';
 import { INodePropertyOptions } from 'n8n-workflow';
 import axios from "axios";
+import * as path from 'path';
+import * as os from 'os';
+
+// Add global declaration for the socket path variable
+declare global {
+    var __n8nDiscordSocketPath: string | undefined;
+}
 
 export interface ICredentials {
     clientId: string;
     token: string;
     apiKey: string;
     baseUrl: string;
+}
+
+// Helper function to get the same socket path as used in bot.ts
+function getSocketPath() {
+    // First check if the path is available from the global variable set by bot.ts
+    if (typeof global.__n8nDiscordSocketPath !== 'undefined') {
+        return global.__n8nDiscordSocketPath;
+    }
+    // Otherwise use the same logic to generate the path
+    const tmpDir = os.tmpdir();
+    return path.join(tmpDir, 'n8n-discord-bot.sock');
 }
 
 export const connection = (credentials: ICredentials): Promise<string> => {
@@ -18,13 +36,13 @@ export const connection = (credentials: ICredentials): Promise<string> => {
 
         const timeout = setTimeout(() => reject('timeout'), 15000);
         
-        // Use the exact same socket path as the server
-        const socketPath = '/tmp/bot';
+        // Get the socket path that's compatible with PM2
+        const socketPath = getSocketPath();
         
-        // Configure IPC for Ubuntu environment
+        // Configure IPC for Unix/PM2 environment
         ipc.config.retry = 1500;
         ipc.config.silent = false; // Enable logs for debugging
-        ipc.config.socketRoot = '/tmp/';
+        ipc.config.socketRoot = path.dirname(socketPath) + '/';
         ipc.config.appspace = '';
         ipc.config.maxRetries = 10;
         ipc.config.stopRetrying = false;
@@ -74,11 +92,11 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
     const channelsRequest = () =>
         new Promise((resolve) => {
             const timeout = setTimeout(() => resolve(''), 5000);
-            const socketPath = '/tmp/bot';
+            const socketPath = getSocketPath();
             
             ipc.config.retry = 1500;
             ipc.config.silent = false;
-            ipc.config.socketRoot = '/tmp/';
+            ipc.config.socketRoot = path.dirname(socketPath) + '/';
             ipc.config.appspace = '';
             
             console.log(`Channels Request: Connecting to IPC server at ${socketPath}`);
@@ -139,11 +157,11 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
     const guildsRequest = () =>
         new Promise((resolve) => {
             const timeout = setTimeout(() => resolve(''), 5000);
-            const socketPath = '/tmp/bot';
+            const socketPath = getSocketPath();
             
             ipc.config.retry = 1500;
             ipc.config.silent = false;
-            ipc.config.socketRoot = '/tmp/';
+            ipc.config.socketRoot = path.dirname(socketPath) + '/';
             ipc.config.appspace = '';
             
             console.log(`Guilds Request: Connecting to IPC server at ${socketPath}`);
@@ -208,11 +226,11 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
     const rolesRequest = () =>
         new Promise((resolve) => {
             const timeout = setTimeout(() => resolve(''), 5000);
-            const socketPath = '/tmp/bot';
+            const socketPath = getSocketPath();
             
             ipc.config.retry = 1500;
             ipc.config.silent = false;
-            ipc.config.socketRoot = '/tmp/';
+            ipc.config.socketRoot = path.dirname(socketPath) + '/';
             ipc.config.appspace = '';
             
             console.log(`Roles Request: Connecting to IPC server at ${socketPath}`);
@@ -280,11 +298,11 @@ export const checkWorkflowStatus = async (n8nApiUrl: String, apiToken: String, w
 
 export const ipcRequest = (type: string, parameters: any): Promise<any> => {
     return new Promise((resolve) => {
-        const socketPath = '/tmp/bot';
+        const socketPath = getSocketPath();
         
         ipc.config.retry = 1500;
         ipc.config.silent = false;
-        ipc.config.socketRoot = '/tmp/';
+        ipc.config.socketRoot = path.dirname(socketPath) + '/';
         ipc.config.appspace = '';
         
         console.log(`IPC Request (${type}): Connecting to IPC server at ${socketPath}`);
