@@ -16,11 +16,9 @@ import {
 } from './helper';
 import settings from './settings';
 import { IDiscordInteractionMessageParameters, IDiscordNodeActionParameters } from './DiscordInteraction/DiscordInteraction.node';
+import * as fs from 'fs';
 
 // Extend the Discord Message type to include our custom property
-// interface ExtendedMessage extends Message<boolean> {
-//     processedContent?: string;
-// }
 
 export default function () {
     const client = new Client({
@@ -43,22 +41,36 @@ export default function () {
         console.log(`Logged in as ${client.user?.tag}`);
     });
 
-    // Configure IPC for Ubuntu environment
+    // Clean up any existing socket file to prevent EADDRINUSE errors
+    const socketPath = '/tmp/bot';
+    try {
+        if (fs.existsSync(socketPath)) {
+            fs.unlinkSync(socketPath);
+            console.log(`Removed existing socket file at ${socketPath}`);
+        }
+    } catch (err) {
+        console.error(`Error cleaning up socket file: ${err}`);
+    }
+
+    // Configure IPC for Unix environment
     ipc.config.id = 'bot';
     ipc.config.retry = 1500;
     ipc.config.silent = false; // Enable logs for debugging
     ipc.config.socketRoot = '/tmp/';
     ipc.config.appspace = '';
     ipc.config.unlink = true; // Clean up socket on exit
+    ipc.config.maxRetries = 10; // Set maximum retries
+    ipc.config.stopRetrying = false; // Don't stop retrying
     
     console.log(`IPC Server Configuration: Socket Root: ${ipc.config.socketRoot}, App space: ${ipc.config.appspace}, ID: ${ipc.config.id}`);
+    console.log(`Expected socket path: ${socketPath}`);
 
     // nodes are executed in a child process, the Discord bot is executed in the main process
     // so it's not stopped when a node execution end
     // we use ipc to communicate between the node execution process and the bot
     // ipc is serving in the main process & childs connect to it using the ipc client
-    ipc.serve(function () {
-        console.log(`ipc bot server started`);
+    ipc.serve(socketPath, function () {
+        console.log(`IPC bot server started on ${socketPath}`);
 
         ipc.server.on('triggerNodeRegistered', (data: any, socket: any) => {
 

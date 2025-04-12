@@ -17,19 +17,28 @@ export const connection = (credentials: ICredentials): Promise<string> => {
         }
 
         const timeout = setTimeout(() => reject('timeout'), 15000);
-
+        
+        // Use the exact same socket path as the server
+        const socketPath = '/tmp/bot';
+        
         // Configure IPC for Ubuntu environment
         ipc.config.retry = 1500;
         ipc.config.silent = false; // Enable logs for debugging
         ipc.config.socketRoot = '/tmp/';
         ipc.config.appspace = '';
+        ipc.config.maxRetries = 10;
+        ipc.config.stopRetrying = false;
         
-        console.log(`IPC Client Configuration: Socket Root: ${ipc.config.socketRoot}, App space: ${ipc.config.appspace}`);
+        console.log(`IPC Client Configuration: Socket Root: ${ipc.config.socketRoot}, Socket Path: ${socketPath}`);
         
-        ipc.connectTo('bot', () => {
-            console.log('Attempting to connect to IPC server at:', ipc.config.socketRoot + 'bot');
-            ipc.of.bot.emit('credentials', credentials);
-
+        ipc.connectTo('bot', socketPath, () => {
+            console.log('Attempting to connect to IPC server at:', socketPath);
+            
+            ipc.of.bot.on('connect', () => {
+                console.log('Successfully connected to IPC server');
+                ipc.of.bot.emit('credentials', credentials);
+            });
+            
             ipc.of.bot.on('credentials', (data: string) => {
                 clearTimeout(timeout);
                 if (data === 'error') reject('Invalid credentials');
@@ -37,6 +46,11 @@ export const connection = (credentials: ICredentials): Promise<string> => {
                 else if (data === 'login') reject('Already logging in');
                 else if (data === 'different') resolve('Already logging in with different credentials');
                 else resolve(data); // ready / already
+            });
+            
+            ipc.of.bot.on('error', (err: any) => {
+                console.error('IPC connection error:', err);
+                reject(`IPC error: ${err.message || 'Unknown error'}`);
             });
         });
     });
@@ -60,22 +74,29 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
     const channelsRequest = () =>
         new Promise((resolve) => {
             const timeout = setTimeout(() => resolve(''), 5000);
-
+            const socketPath = '/tmp/bot';
+            
             ipc.config.retry = 1500;
+            ipc.config.silent = false;
+            ipc.config.socketRoot = '/tmp/';
+            ipc.config.appspace = '';
             
-            // Set IPC path based on operating system to fix connection issues
-            if (process.platform === 'win32') {
-                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
-            } else {
-                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
-            }
+            console.log(`Channels Request: Connecting to IPC server at ${socketPath}`);
             
-            ipc.connectTo('bot', () => {
-                ipc.of.bot.emit('list:channels', guildIds);
+            ipc.connectTo('bot', socketPath, () => {
+                ipc.of.bot.on('connect', () => {
+                    console.log('Connected to IPC server for channels request');
+                    ipc.of.bot.emit('list:channels', guildIds);
+                });
 
                 ipc.of.bot.on('list:channels', (data: { name: string; value: string }[]) => {
                     clearTimeout(timeout);
                     resolve(data);
+                });
+                
+                ipc.of.bot.on('error', (err: any) => {
+                    console.error('IPC connection error in getChannels:', err);
+                    resolve('');
                 });
             });
         });
@@ -118,22 +139,29 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
     const guildsRequest = () =>
         new Promise((resolve) => {
             const timeout = setTimeout(() => resolve(''), 5000);
-
+            const socketPath = '/tmp/bot';
+            
             ipc.config.retry = 1500;
+            ipc.config.silent = false;
+            ipc.config.socketRoot = '/tmp/';
+            ipc.config.appspace = '';
             
-            // Set IPC path based on operating system to fix connection issues
-            if (process.platform === 'win32') {
-                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
-            } else {
-                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
-            }
+            console.log(`Guilds Request: Connecting to IPC server at ${socketPath}`);
             
-            ipc.connectTo('bot', () => {
-                ipc.of.bot.emit('list:guilds');
+            ipc.connectTo('bot', socketPath, () => {
+                ipc.of.bot.on('connect', () => {
+                    console.log('Connected to IPC server for guilds request');
+                    ipc.of.bot.emit('list:guilds');
+                });
 
                 ipc.of.bot.on('list:guilds', (data: { name: string; value: string }[]) => {
                     clearTimeout(timeout);
                     resolve(data);
+                });
+                
+                ipc.of.bot.on('error', (err: any) => {
+                    console.error('IPC connection error in getGuilds:', err);
+                    resolve('');
                 });
             });
         });
@@ -180,22 +208,29 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
     const rolesRequest = () =>
         new Promise((resolve) => {
             const timeout = setTimeout(() => resolve(''), 5000);
-
+            const socketPath = '/tmp/bot';
+            
             ipc.config.retry = 1500;
+            ipc.config.silent = false;
+            ipc.config.socketRoot = '/tmp/';
+            ipc.config.appspace = '';
             
-            // Set IPC path based on operating system to fix connection issues
-            if (process.platform === 'win32') {
-                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
-            } else {
-                ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
-            }
+            console.log(`Roles Request: Connecting to IPC server at ${socketPath}`);
             
-            ipc.connectTo('bot', () => {
-                ipc.of.bot.emit('list:roles', selectedGuildIds);
+            ipc.connectTo('bot', socketPath, () => {
+                ipc.of.bot.on('connect', () => {
+                    console.log('Connected to IPC server for roles request');
+                    ipc.of.bot.emit('list:roles', selectedGuildIds);
+                });
 
                 ipc.of.bot.on('list:roles', (data: any) => {
                     clearTimeout(timeout);
                     resolve(data);
+                });
+                
+                ipc.of.bot.on('error', (err: any) => {
+                    console.error('IPC connection error in getRoles:', err);
+                    resolve('');
                 });
             });
         });
@@ -245,23 +280,30 @@ export const checkWorkflowStatus = async (n8nApiUrl: String, apiToken: String, w
 
 export const ipcRequest = (type: string, parameters: any): Promise<any> => {
     return new Promise((resolve) => {
+        const socketPath = '/tmp/bot';
+        
         ipc.config.retry = 1500;
+        ipc.config.silent = false;
+        ipc.config.socketRoot = '/tmp/';
+        ipc.config.appspace = '';
         
-        // Set IPC path based on operating system to fix connection issues
-        if (process.platform === 'win32') {
-            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '\\.\pipe\\';
-        } else {
-            ipc.config.socketRoot = process.env.IPC_SOCKET_ROOT || '/tmp/';
-        }
+        console.log(`IPC Request (${type}): Connecting to IPC server at ${socketPath}`);
         
-        ipc.connectTo('bot', () => {
+        ipc.connectTo('bot', socketPath, () => {
+            ipc.of.bot.on('connect', () => {
+                console.log(`Connected to IPC server for "${type}" request`);
+                ipc.of.bot.emit(type, parameters);
+            });
+            
             ipc.of.bot.on(`callback:${type}`, (data: any) => {
-                console.log("response fired", data);
+                console.log(`Response received for "${type}" request:`, data);
                 resolve(data);
             });
-
-            // send event to bot
-            ipc.of.bot.emit(type, parameters);
+            
+            ipc.of.bot.on('error', (err: any) => {
+                console.error(`IPC connection error in "${type}" request:`, err);
+                resolve(null);
+            });
         });
     });
 };
