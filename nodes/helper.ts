@@ -1,12 +1,13 @@
 import ipc from 'node-ipc';
 import { INodePropertyOptions } from 'n8n-workflow';
 import axios from "axios";
-import * as path from 'path';
-import * as os from 'os';
+// import * as path from 'path';
+// import * as os from 'os';
+// import * as fs from 'fs';
 
-// Add global declaration for the socket path variable
+// Add type declaration for the global property
 declare global {
-    var __n8nDiscordSocketPath: string | undefined;
+    var __n8nDiscordSocketPath: string;
 }
 
 export interface ICredentials {
@@ -16,15 +17,10 @@ export interface ICredentials {
     baseUrl: string;
 }
 
-// Helper function to get the same socket path as used in bot.ts
+// Helper function to get a consistent socket path that matches the server
 function getSocketPath() {
-    // First check if the path is available from the global variable set by bot.ts
-    if (typeof global.__n8nDiscordSocketPath !== 'undefined') {
-        return global.__n8nDiscordSocketPath;
-    }
-    // Otherwise use the same logic to generate the path
-    const tmpDir = os.tmpdir();
-    return path.join(tmpDir, 'n8n-discord-bot.sock');
+    // We'll use the fixed path that's working in the logs: /tmp/bot
+    return '/tmp/bot';
 }
 
 export const connection = (credentials: ICredentials): Promise<string> => {
@@ -36,13 +32,13 @@ export const connection = (credentials: ICredentials): Promise<string> => {
 
         const timeout = setTimeout(() => reject('timeout'), 15000);
         
-        // Get the socket path that's compatible with PM2
+        // Use the fixed socket path that works
         const socketPath = getSocketPath();
         
-        // Configure IPC for Unix/PM2 environment
+        // Configure IPC for Unix environment
         ipc.config.retry = 1500;
         ipc.config.silent = false; // Enable logs for debugging
-        ipc.config.socketRoot = path.dirname(socketPath) + '/';
+        ipc.config.socketRoot = '/tmp/';
         ipc.config.appspace = '';
         ipc.config.maxRetries = 10;
         ipc.config.stopRetrying = false;
@@ -96,7 +92,7 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
             
             ipc.config.retry = 1500;
             ipc.config.silent = false;
-            ipc.config.socketRoot = path.dirname(socketPath) + '/';
+            ipc.config.socketRoot = '/tmp/';
             ipc.config.appspace = '';
             
             console.log(`Channels Request: Connecting to IPC server at ${socketPath}`);
@@ -161,7 +157,7 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
             
             ipc.config.retry = 1500;
             ipc.config.silent = false;
-            ipc.config.socketRoot = path.dirname(socketPath) + '/';
+            ipc.config.socketRoot = '/tmp/';
             ipc.config.appspace = '';
             
             console.log(`Guilds Request: Connecting to IPC server at ${socketPath}`);
@@ -230,7 +226,7 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
             
             ipc.config.retry = 1500;
             ipc.config.silent = false;
-            ipc.config.socketRoot = path.dirname(socketPath) + '/';
+            ipc.config.socketRoot = '/tmp/';
             ipc.config.appspace = '';
             
             console.log(`Roles Request: Connecting to IPC server at ${socketPath}`);
@@ -302,7 +298,7 @@ export const ipcRequest = (type: string, parameters: any): Promise<any> => {
         
         ipc.config.retry = 1500;
         ipc.config.silent = false;
-        ipc.config.socketRoot = path.dirname(socketPath) + '/';
+        ipc.config.socketRoot = '/tmp/';
         ipc.config.appspace = '';
         
         console.log(`IPC Request (${type}): Connecting to IPC server at ${socketPath}`);

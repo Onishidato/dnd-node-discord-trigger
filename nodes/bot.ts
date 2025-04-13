@@ -17,8 +17,13 @@ import {
 import settings from './settings';
 import { IDiscordInteractionMessageParameters, IDiscordNodeActionParameters } from './DiscordInteraction/DiscordInteraction.node';
 import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+// import * as path from 'path';
+// import * as os from 'os';
+
+// Add type declaration for the global property
+declare global {
+    var __n8nDiscordSocketPath: string;
+}
 
 // Extend the Discord Message type to include our custom property
 
@@ -43,11 +48,8 @@ export default function () {
         console.log(`Logged in as ${client.user?.tag}`);
     });
 
-    // Create a more PM2-friendly socket path
-    // Using a unique filename in a consistent directory that PM2 can access
-    // We'll use the temp directory which is typically accessible by all processes
-    const tmpDir = os.tmpdir(); // Get system temp directory
-    const socketPath = path.join(tmpDir, 'n8n-discord-bot.sock');
+    // Since we can see that /tmp/bot is working, we'll use that consistently
+    const socketPath = '/tmp/bot';
     
     console.log(`Using socket path: ${socketPath}`);
     
@@ -61,11 +63,11 @@ export default function () {
         console.error(`Error cleaning up socket file: ${err}`);
     }
 
-    // Configure IPC for Unix environment with PM2 compatibility
+    // Configure IPC for Unix environment
     ipc.config.id = 'bot';
     ipc.config.retry = 1500;
     ipc.config.silent = false; // Enable logs for debugging
-    ipc.config.socketRoot = path.dirname(socketPath) + '/';
+    ipc.config.socketRoot = '/tmp/';
     ipc.config.appspace = '';
     ipc.config.unlink = true; // Clean up socket on exit
     ipc.config.maxRetries = 10; // Set maximum retries
