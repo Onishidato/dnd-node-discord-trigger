@@ -226,7 +226,18 @@ export default function (): void {
                         // Image attachment check for this specific node
                         const hasImageAttachments = message.attachments.some(attachment => {
                             const contentType = attachment.contentType?.toLowerCase() || '';
-                            return contentType.startsWith('image/');
+                            // First check by content type
+                            if (contentType.startsWith('image/')) {
+                                return true;
+                            }
+
+                            // If content type is missing or unknown, check file extension
+                            if (!contentType && attachment.name) {
+                                const extension = attachment.name.split('.').pop()?.toLowerCase();
+                                return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff'].includes(extension || '');
+                            }
+
+                            return false;
                         });
 
                         // Select regex pattern based on this node's configuration

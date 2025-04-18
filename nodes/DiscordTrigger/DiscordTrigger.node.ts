@@ -9,6 +9,7 @@ import {
 } from 'n8n-workflow';
 import { options } from './DiscordTrigger.node.options';
 import bot from '../bot';
+import { detectMimeTypeFromFilename } from '../helper';
 import ipc from 'node-ipc';
 import {
     connection,
@@ -165,13 +166,24 @@ export class DiscordTrigger implements INodeType {
                         // Check if any attachments are images
                         const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
                             const contentType = attachment.contentType?.toLowerCase() || '';
-                            return contentType.startsWith('image/');
+                            // First check by content type
+                            if (contentType.startsWith('image/')) {
+                                return true;
+                            }
+
+                            // If content type is missing or unknown, check file extension
+                            if (!contentType && attachment.name) {
+                                const extension = attachment.name.split('.').pop()?.toLowerCase();
+                                return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff'].includes(extension || '');
+                            }
+
+                            return false;
                         }) : [];
 
                         // Format image data for AI services
                         const geminiReadyImages = imageAttachments.map((attachment: any) => ({
                             url: attachment.url,
-                            mimeType: attachment.contentType,
+                            mimeType: attachment.contentType || detectMimeTypeFromFilename(attachment.name),
                             width: attachment.width,
                             height: attachment.height,
                             size: attachment.size

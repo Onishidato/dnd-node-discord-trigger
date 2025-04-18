@@ -27,7 +27,7 @@ function initializeIPC() {
     if (global.__n8nDiscordIPCInitialized) {
         return;
     }
-    
+
     // Configure IPC for Unix environment (Ubuntu 22.04)
     ipc.config.retry = 1500;
     ipc.config.silent = false; // Enable logs for debugging
@@ -35,7 +35,7 @@ function initializeIPC() {
     ipc.config.appspace = '';
     ipc.config.maxRetries = 10;
     ipc.config.stopRetrying = false;
-    
+
     // Mark as initialized
     global.__n8nDiscordIPCInitialized = true;
     console.log('IPC configuration initialized');
@@ -53,28 +53,28 @@ export const connection = (credentials: ICredentials): Promise<string> => {
 
         // Initialize IPC configuration
         initializeIPC();
-        
+
         // Generate a credential hash for this connection
         const credHash = getCredentialHash(credentials.clientId, credentials.token);
-        
+
         // Use the fixed socket path for Ubuntu 22.04
         const socketPath = getSocketPath();
-        
+
         console.log(`IPC Client Configuration: Socket Root: ${ipc.config.socketRoot}, Socket Path: ${socketPath}`);
-        
+
         // Set timeout for connection attempt
         const timeout = setTimeout(() => reject(new Error('Connection timeout after 15 seconds')), 15000);
-        
+
         // Check if we already have an active connection
         if (connectionCache[credHash]) {
             clearTimeout(timeout);
             console.log(`Using existing connection for credential hash: ${credHash}`);
             return resolve('already');
         }
-        
+
         ipc.connectTo('bot', socketPath, () => {
             console.log('Attempting to connect to IPC server at:', socketPath);
-            
+
             ipc.of.bot.on('connect', () => {
                 console.log('Successfully connected to IPC server');
                 // Mark connection as active in cache
@@ -82,10 +82,10 @@ export const connection = (credentials: ICredentials): Promise<string> => {
                 // Send credentials along with the credential hash
                 ipc.of.bot.emit('credentials', { credentials, credentialHash: credHash });
             });
-            
+
             ipc.of.bot.on('credentials', (data: string) => {
                 clearTimeout(timeout);
-                
+
                 if (data === 'error') {
                     connectionCache[credHash] = false;
                     reject(new Error('Invalid credentials'));
@@ -100,14 +100,14 @@ export const connection = (credentials: ICredentials): Promise<string> => {
                     resolve(data); // ready / already
                 }
             });
-            
+
             ipc.of.bot.on('error', (err: any) => {
                 console.error('IPC connection error:', err);
                 connectionCache[credHash] = false;
                 clearTimeout(timeout);
                 reject(new Error(`IPC error: ${err.message || 'Unknown error'}`));
             });
-            
+
             ipc.of.bot.on('disconnect', () => {
                 console.log(`IPC connection disconnected for ${credHash}`);
                 connectionCache[credHash] = false;
@@ -122,16 +122,16 @@ function createIPCConnection(credentialHash: string): Promise<any> {
     return new Promise((resolve) => {
         // Initialize IPC configuration
         initializeIPC();
-        
+
         const socketPath = getSocketPath();
-        
+
         // No need to re-configure IPC here since we've initialized it already
         ipc.connectTo('bot', socketPath, () => {
             ipc.of.bot.on('connect', function() {
                 console.log(`IPC connection established for request with credential hash ${credentialHash}`);
                 resolve(ipc.of.bot);
             });
-            
+
             ipc.of.bot.on('error', function(err: any) {
                 console.error('IPC connection error in helper function:', err);
                 resolve(null);
@@ -146,7 +146,7 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
     try {
         const credentials = await that.getCredentials('discordBotTriggerApi');
         const res = await connection(credentials);
-        
+
         if (!['ready', 'already'].includes(res)) {
             throw new Error(`Connection failed: ${res}`);
         }
@@ -159,29 +159,29 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
                 const timeout = setTimeout(() => {
                     resolve([]);
                 }, 5000);
-                
+
                 try {
                     // Get IPC connection
                     const ipcClient = await createIPCConnection(credHash);
-                    
+
                     if (!ipcClient) {
                         clearTimeout(timeout);
                         return resolve([]);
                     }
-                    
+
                     // Set up event listener for response
                     const responseHandler = (data: { name: string; value: string }[]) => {
                         clearTimeout(timeout);
                         ipcClient.off('list:channels', responseHandler);
                         resolve(data);
                     };
-                    
+
                     ipcClient.on('list:channels', responseHandler);
-                    
+
                     // Send the request
-                    ipcClient.emit('list:channels', { 
-                        guildIds, 
-                        credentialHash: credHash 
+                    ipcClient.emit('list:channels', {
+                        guildIds,
+                        credentialHash: credHash
                     });
                 } catch (error) {
                     console.error('Error in channels request:', error);
@@ -216,11 +216,11 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
     try {
         const credentials = await that.getCredentials('discordBotTriggerApi');
         const res = await connection(credentials);
-        
+
         if (!['ready', 'already'].includes(res)) {
             throw new Error(`Connection failed: ${res}`);
         }
-        
+
         // Calculate credential hash for this request
         const credHash = getCredentialHash(credentials.clientId, credentials.token);
 
@@ -229,28 +229,28 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
                 const timeout = setTimeout(() => {
                     resolve([]);
                 }, 5000);
-                
+
                 try {
                     // Get IPC connection
                     const ipcClient = await createIPCConnection(credHash);
-                    
+
                     if (!ipcClient) {
                         clearTimeout(timeout);
                         return resolve([]);
                     }
-                    
+
                     // Set up event listener for response
                     const responseHandler = (data: { name: string; value: string }[]) => {
                         clearTimeout(timeout);
                         ipcClient.off('list:guilds', responseHandler);
                         resolve(data);
                     };
-                    
+
                     ipcClient.on('list:guilds', responseHandler);
-                    
+
                     // Send the request
-                    ipcClient.emit('list:guilds', { 
-                        credentialHash: credHash 
+                    ipcClient.emit('list:guilds', {
+                        credentialHash: credHash
                     });
                 } catch (error) {
                     console.error('Error in guilds request:', error);
@@ -289,11 +289,11 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
     try {
         const credentials = await that.getCredentials('discordBotTriggerApi');
         const res = await connection(credentials);
-        
+
         if (!['ready', 'already'].includes(res)) {
             throw new Error(`Connection failed: ${res}`);
         }
-        
+
         // Calculate credential hash for this request
         const credHash = getCredentialHash(credentials.clientId, credentials.token);
 
@@ -302,29 +302,29 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
                 const timeout = setTimeout(() => {
                     resolve([]);
                 }, 5000);
-                
+
                 try {
                     // Get IPC connection
                     const ipcClient = await createIPCConnection(credHash);
-                    
+
                     if (!ipcClient) {
                         clearTimeout(timeout);
                         return resolve([]);
                     }
-                    
+
                     // Set up event listener for response
                     const responseHandler = (data: any) => {
                         clearTimeout(timeout);
                         ipcClient.off('list:roles', responseHandler);
                         resolve(data);
                     };
-                    
+
                     ipcClient.on('list:roles', responseHandler);
-                    
+
                     // Send the request
-                    ipcClient.emit('list:roles', { 
-                        guildIds: selectedGuildIds, 
-                        credentialHash: credHash 
+                    ipcClient.emit('list:roles', {
+                        guildIds: selectedGuildIds,
+                        credentialHash: credHash
                     });
                 } catch (error) {
                     console.error('Error in roles request:', error);
@@ -378,25 +378,25 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
     try {
         // Calculate credential hash
         const credHash = getCredentialHash(credentials.clientId, credentials.token);
-        
+
         // Initialize IPC configuration
         initializeIPC();
-        
+
         return new Promise(async (resolve) => {
             const timeout = setTimeout(() => {
                 console.log(`Request ${type} timed out after 10 seconds`);
                 resolve(null);
             }, 10000);
-            
+
             try {
                 // Get IPC connection
                 const ipcClient = await createIPCConnection(credHash);
-                
+
                 if (!ipcClient) {
                     clearTimeout(timeout);
                     return resolve(null);
                 }
-                
+
                 // Set up response handler
                 const responseHandler = (data: any) => {
                     clearTimeout(timeout);
@@ -404,13 +404,13 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                     ipcClient.off(`callback:${type}`, responseHandler);
                     resolve(data);
                 };
-                
+
                 ipcClient.on(`callback:${type}`, responseHandler);
-                
+
                 // Send the request
-                ipcClient.emit(type, { 
-                    nodeParameters: parameters, 
-                    credentialHash: credHash 
+                ipcClient.emit(type, {
+                    nodeParameters: parameters,
+                    credentialHash: credHash
                 });
             } catch (error) {
                 console.error(`Error in ${type} request:`, error);
@@ -429,25 +429,25 @@ export const cleanupBot = async (nodeId: string, credentials: ICredentials): Pro
     try {
         // Calculate credential hash
         const credHash = getCredentialHash(credentials.clientId, credentials.token);
-        
+
         // Initialize IPC configuration
         initializeIPC();
-        
+
         return new Promise(async (resolve) => {
             const timeout = setTimeout(() => {
                 console.log(`Cleanup request timed out after 5 seconds`);
                 resolve(false);
             }, 5000);
-            
+
             try {
                 // Get IPC connection
                 const ipcClient = await createIPCConnection(credHash);
-                
+
                 if (!ipcClient) {
                     clearTimeout(timeout);
                     return resolve(false);
                 }
-                
+
                 // Set up response handler
                 const responseHandler = (data: any) => {
                     clearTimeout(timeout);
@@ -455,23 +455,23 @@ export const cleanupBot = async (nodeId: string, credentials: ICredentials): Pro
                     delete connectionCache[credHash];
                     // Remove the listener to prevent memory leaks
                     ipcClient.off('cleanupBot:response', responseHandler);
-                    
+
                     try {
                         // Disconnect this IPC connection
                         ipc.disconnect('bot');
                     } catch (err) {
                         console.error('Error disconnecting IPC during cleanup:', err);
                     }
-                    
+
                     resolve(data.success);
                 };
-                
+
                 ipcClient.on('cleanupBot:response', responseHandler);
-                
+
                 // Send the cleanup request
-                ipcClient.emit('cleanupBot', { 
+                ipcClient.emit('cleanupBot', {
                     nodeId,
-                    credentialHash: credHash 
+                    credentialHash: credHash
                 });
             } catch (error) {
                 console.error('Error in cleanupBot request:', error);
@@ -485,6 +485,44 @@ export const cleanupBot = async (nodeId: string, credentials: ICredentials): Pro
     }
 };
 
+
+// Helper function to detect MIME type from filename
+export const detectMimeTypeFromFilename = (filename?: string): string => {
+    if (!filename) return 'application/octet-stream';
+
+    const extension = filename.split('.').pop()?.toLowerCase() || '';
+
+    const mimeTypeMap: Record<string, string> = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'bmp': 'image/bmp',
+        'tiff': 'image/tiff',
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'ppt': 'application/vnd.ms-powerpoint',
+        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'txt': 'text/plain',
+        'csv': 'text/csv',
+        'html': 'text/html',
+        'js': 'text/javascript',
+        'json': 'application/json',
+        'xml': 'application/xml',
+        'zip': 'application/zip',
+        'mp3': 'audio/mpeg',
+        'mp4': 'video/mp4',
+        'wav': 'audio/wav',
+        'avi': 'video/x-msvideo',
+        'mov': 'video/quicktime'
+    };
+
+    return mimeTypeMap[extension] || 'application/octet-stream';
+};
 
 function removeTrailingSlash(url: String) {
     if (url.endsWith('/')) {
