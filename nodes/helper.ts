@@ -18,12 +18,17 @@ export interface ICredentials {
 
 // Helper function to get a consistent socket path that matches the server
 function getSocketPath() {
+    // If the global path was set by bot.ts, use that to ensure consistency
+    if (global.__n8nDiscordSocketPath) {
+        return global.__n8nDiscordSocketPath;
+    }
+
     // Check if we're on Windows
     const isWindows = process.platform === 'win32';
 
     if (isWindows) {
         // Use Windows-compatible path (named pipe)
-        return '\\\\.\\pipe\\discord-bot';
+        return '\\\\.\\pipe\\n8n-discord-bot';
     } else {
         // Use Unix socket path
         return '/tmp/bot';
@@ -40,6 +45,7 @@ function initializeIPC() {
     const isWindows = process.platform === 'win32';
 
     // Configure IPC based on platform
+    ipc.config.id = 'discord-bot-client';
     ipc.config.retry = 1500;
     ipc.config.silent = false; // Enable logs for debugging
     ipc.config.maxRetries = 10;
@@ -47,12 +53,14 @@ function initializeIPC() {
 
     if (isWindows) {
         // Windows-specific configuration
-        ipc.config.id = 'discord-bot-client';
+        ipc.config.networkHost = 'localhost';
+        ipc.config.networkPort = 8000;
         ipc.config.socketRoot = '';  // Not used on Windows
     } else {
         // Unix-specific configuration
         ipc.config.socketRoot = '/tmp/';
         ipc.config.appspace = '';
+        ipc.config.unlink = true;    // Clean up socket on exit
     }
 
     // Mark as initialized
