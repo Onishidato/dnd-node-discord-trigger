@@ -89,6 +89,7 @@ export const connection = (credentials: ICredentials): Promise<string> => {
         const isWindows = process.platform === 'win32';
 
         console.log(`IPC Client Configuration: Platform: ${isWindows ? 'Windows' : 'Unix'}, Socket Path: ${socketPath}`);
+        console.log(`Attempting connection for credentials with clientId: ${credentials.clientId.substring(0, 5)}... (hash: ${credHash.substring(0, 8)})`);
 
         // Set timeout for connection attempt - increase from 15s to 30s to allow more time for connection
         const timeout = setTimeout(() => {
@@ -103,13 +104,16 @@ export const connection = (credentials: ICredentials): Promise<string> => {
             return resolve('already');
         }
 
+        // Use a unique connection ID to avoid conflicts with multiple bots
+        const connectionId = `bot_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
         try {
-            ipc.connectTo('bot', socketPath, () => {
-                console.log('Attempting to connect to IPC server at:', socketPath);
+            ipc.connectTo(connectionId, socketPath, () => {
+                console.log(`Attempting to connect to IPC server at: ${socketPath} with connection ID: ${connectionId}`);
 
                 // Handle connection error
-                ipc.of.bot.on('error', (err: any) => {
-                    console.error('IPC connection error:', err);
+                ipc.of[connectionId].on('error', (err: any) => {
+                    console.error(`IPC connection error for ${connectionId}:`, err);
                     connectionCache[credHash] = false;
                     clearTimeout(timeout);
 
@@ -118,18 +122,35 @@ export const connection = (credentials: ICredentials): Promise<string> => {
                     } else {
                         reject(new Error(`IPC error: ${err.message || 'Unknown error'}`));
                     }
+
+                    // Clean up this connection attempt
+                    try {
+                        ipc.disconnect(connectionId);
+                    } catch (e) {
+                        console.error(`Error disconnecting from ${connectionId}:`, e);
+                    }
                 });
 
-                ipc.of.bot.on('connect', () => {
-                    console.log('Successfully connected to IPC server');
+                ipc.of[connectionId].on('connect', () => {
+                    console.log(`Successfully connected to IPC server with connection ID: ${connectionId}`);
                     // Mark connection as active in cache
                     connectionCache[credHash] = true;
                     // Send credentials along with the credential hash
-                    ipc.of.bot.emit('credentials', { credentials, credentialHash: credHash });
+                    ipc.of[connectionId].emit('credentials', { credentials, credentialHash: credHash });
                 });
 
-                ipc.of.bot.on('credentials', (data: string) => {
+                ipc.of[connectionId].on('credentials', (data: string) => {
                     clearTimeout(timeout);
+
+                    // Clean up this connection as we've received a response
+                    setTimeout(() => {
+                        try {
+                            ipc.disconnect(connectionId);
+                            console.log(`Disconnected from ${connectionId} after receiving credentials response`);
+                        } catch (e) {
+                            console.error(`Error disconnecting from ${connectionId}:`, e);
+                        }
+                    }, 1000);
 
                     if (data === 'error') {
                         connectionCache[credHash] = false;
@@ -146,9 +167,8 @@ export const connection = (credentials: ICredentials): Promise<string> => {
                     }
                 });
 
-                ipc.of.bot.on('disconnect', () => {
-                    console.log(`IPC connection disconnected for ${credHash}`);
-                    connectionCache[credHash] = false;
+                ipc.of[connectionId].on('disconnect', () => {
+                    console.log(`IPC connection disconnected for ${connectionId} (cred hash: ${credHash})`);
                 });
             });
         } catch (error) {
@@ -169,29 +189,42 @@ function createIPCConnection(credentialHash: string): Promise<any> {
         const socketPath = getSocketPath();
         const isWindows = process.platform === 'win32';
 
-        console.log(`Creating IPC connection: Platform: ${isWindows ? 'Windows' : 'Unix'}, Socket Path: ${socketPath}`);
+        // Use a unique connection ID for each request
+        const connectionId = `bot_req_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        console.log(`Creating IPC connection: Platform: ${isWindows ? 'Windows' : 'Unix'}, Socket Path: ${socketPath}, Connection ID: ${connectionId}`);
 
         // Set a timeout to prevent hanging indefinitely
         const connectionTimeout = setTimeout(() => {
-            console.error(`IPC connection timed out for request with credential hash ${credentialHash}`);
+            console.error(`IPC connection timed out for request with credential hash ${credentialHash} (${connectionId})`);
+            try {
+                ipc.disconnect(connectionId);
+            } catch (e) {
+                console.error(`Error disconnecting timed out connection ${connectionId}:`, e);
+            }
             resolve(null);
         }, 10000);
 
         try {
-            // No need to re-configure IPC here since we've initialized it already
-            ipc.connectTo('bot', socketPath, () => {
-                ipc.of.bot.on('connect', function() {
+            // Connect with the unique ID
+            ipc.connectTo(connectionId, socketPath, () => {
+                ipc.of[connectionId].on('connect', function() {
                     clearTimeout(connectionTimeout);
-                    console.log(`IPC connection established for request with credential hash ${credentialHash}`);
-                    resolve(ipc.of.bot);
+                    console.log(`IPC connection established for request with credential hash ${credentialHash} (${connectionId})`);
+                    resolve(ipc.of[connectionId]);
                 });
 
-                ipc.of.bot.on('error', function(err: any) {
+                ipc.of[connectionId].on('error', function(err: any) {
                     clearTimeout(connectionTimeout);
-                    console.error('IPC connection error in helper function:', err);
+                    console.error(`IPC connection error in helper function (${connectionId}):`, err);
 
                     if (isWindows && err.code === 'ENOENT') {
                         console.error(`Named pipe not found at ${socketPath}. Ensure Discord bot is running on Windows.`);
+                    }
+
+                    try {
+                        ipc.disconnect(connectionId);
+                    } catch (e) {
+                        console.error(`Error disconnecting from ${connectionId} after error:`, e);
                     }
 
                     resolve(null);
@@ -199,7 +232,14 @@ function createIPCConnection(credentialHash: string): Promise<any> {
             });
         } catch (error) {
             clearTimeout(connectionTimeout);
-            console.error(`Error creating IPC connection: ${error.message}`);
+            console.error(`Error creating IPC connection (${connectionId}):`, error);
+
+            try {
+                ipc.disconnect(connectionId);
+            } catch (e) {
+                console.error(`Error disconnecting from ${connectionId} after connection creation error:`, e);
+            }
+
             resolve(null);
         }
     });
@@ -225,9 +265,10 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
                     resolve([]);
                 }, 5000);
 
+                let ipcClient: any = null;
                 try {
                     // Get IPC connection
-                    const ipcClient = await createIPCConnection(credHash);
+                    ipcClient = await createIPCConnection(credHash);
 
                     if (!ipcClient) {
                         clearTimeout(timeout);
@@ -238,6 +279,16 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
                     const responseHandler = (data: { name: string; value: string }[]) => {
                         clearTimeout(timeout);
                         ipcClient.off('list:channels', responseHandler);
+
+                        // Disconnect after receiving response
+                        try {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                            console.log(`Disconnected from ${connId} after channels response`);
+                        } catch (e) {
+                            console.error(`Error disconnecting after channels response:`, e);
+                        }
+
                         resolve(data);
                     };
 
@@ -251,6 +302,17 @@ export const getChannels = async (that: any, guildIds: string[]): Promise<INodeP
                 } catch (error) {
                     console.error('Error in channels request:', error);
                     clearTimeout(timeout);
+
+                    // Ensure disconnection on error
+                    if (ipcClient) {
+                        try {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                        } catch (e) {
+                            console.error(`Error disconnecting after channels error:`, e);
+                        }
+                    }
+
                     resolve([]);
                 }
             });
@@ -295,9 +357,10 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
                     resolve([]);
                 }, 5000);
 
+                let ipcClient: any = null;
                 try {
                     // Get IPC connection
-                    const ipcClient = await createIPCConnection(credHash);
+                    ipcClient = await createIPCConnection(credHash);
 
                     if (!ipcClient) {
                         clearTimeout(timeout);
@@ -308,6 +371,16 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
                     const responseHandler = (data: { name: string; value: string }[]) => {
                         clearTimeout(timeout);
                         ipcClient.off('list:guilds', responseHandler);
+
+                        // Disconnect after receiving response
+                        try {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                            console.log(`Disconnected from ${connId} after guilds response`);
+                        } catch (e) {
+                            console.error(`Error disconnecting after guilds response:`, e);
+                        }
+
                         resolve(data);
                     };
 
@@ -320,6 +393,17 @@ export const getGuilds = async (that: any): Promise<INodePropertyOptions[]> => {
                 } catch (error) {
                     console.error('Error in guilds request:', error);
                     clearTimeout(timeout);
+
+                    // Ensure disconnection on error
+                    if (ipcClient) {
+                        try {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                        } catch (e) {
+                            console.error(`Error disconnecting after guilds error:`, e);
+                        }
+                    }
+
                     resolve([]);
                 }
             });
@@ -377,9 +461,10 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
                     resolve([]);
                 }, 5000);
 
+                let ipcClient: any = null;
                 try {
                     // Get IPC connection
-                    const ipcClient = await createIPCConnection(credHash);
+                    ipcClient = await createIPCConnection(credHash);
 
                     if (!ipcClient) {
                         clearTimeout(timeout);
@@ -390,6 +475,16 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
                     const responseHandler = (data: any) => {
                         clearTimeout(timeout);
                         ipcClient.off('list:roles', responseHandler);
+
+                        // Disconnect after receiving response
+                        try {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                            console.log(`Disconnected from ${connId} after roles response`);
+                        } catch (e) {
+                            console.error(`Error disconnecting after roles response:`, e);
+                        }
+
                         resolve(data);
                     };
 
@@ -403,6 +498,17 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
                 } catch (error) {
                     console.error('Error in roles request:', error);
                     clearTimeout(timeout);
+
+                    // Ensure disconnection on error
+                    if (ipcClient) {
+                        try {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                        } catch (e) {
+                            console.error(`Error disconnecting after roles error:`, e);
+                        }
+                    }
+
                     resolve([]);
                 }
             });
@@ -462,9 +568,10 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                 resolve(null);
             }, 10000);
 
+            let ipcClient: any = null;
             try {
-                // Get IPC connection
-                const ipcClient = await createIPCConnection(credHash);
+                // Get IPC connection with a unique ID
+                ipcClient = await createIPCConnection(credHash);
 
                 if (!ipcClient) {
                     clearTimeout(timeout);
@@ -476,19 +583,57 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                     clearTimeout(timeout);
                     // Remove the listener to prevent memory leaks
                     ipcClient.off(`callback:${type}`, responseHandler);
+
+                    // Disconnect after receiving response
+                    try {
+                        const connId = ipcClient.id || 'unknown';
+                        ipc.disconnect(connId);
+                        console.log(`Disconnected from ${connId} after ${type} response`);
+                    } catch (e) {
+                        console.error(`Error disconnecting after ${type} response:`, e);
+                    }
+
                     resolve(data);
                 };
 
                 ipcClient.on(`callback:${type}`, responseHandler);
+
+                // Add a timeout handler to ensure connection gets cleaned up
+                const connectionTimeout = setTimeout(() => {
+                    try {
+                        if (ipcClient) {
+                            const connId = ipcClient.id || 'unknown';
+                            ipc.disconnect(connId);
+                            console.log(`Force disconnected from ${connId} due to no response for ${type}`);
+                        }
+                    } catch (e) {
+                        console.error(`Error force disconnecting:`, e);
+                    }
+                }, 12000); // Slightly longer than the response timeout
 
                 // Send the request
                 ipcClient.emit(type, {
                     nodeParameters: parameters,
                     credentialHash: credHash
                 });
+
+                // Clear the connection timeout when response timeout is cleared
+                timeout.unref();
+                connectionTimeout.unref();
             } catch (error) {
                 console.error(`Error in ${type} request:`, error);
                 clearTimeout(timeout);
+
+                // Ensure disconnection on error
+                if (ipcClient) {
+                    try {
+                        const connId = ipcClient.id || 'unknown';
+                        ipc.disconnect(connId);
+                    } catch (e) {
+                        console.error(`Error disconnecting after ${type} error:`, e);
+                    }
+                }
+
                 resolve(null);
             }
         });
@@ -507,49 +652,84 @@ export const cleanupBot = async (nodeId: string, credentials: ICredentials): Pro
         // Initialize IPC configuration
         initializeIPC();
 
+        // Use a unique connection ID for cleanup
+        const cleanupConnectionId = `cleanup_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
         return new Promise(async (resolve) => {
             const timeout = setTimeout(() => {
                 console.log(`Cleanup request timed out after 5 seconds`);
+                // Clean up connection from cache even if timeout occurs
+                delete connectionCache[credHash];
+
+                try {
+                    ipc.disconnect(cleanupConnectionId);
+                } catch (e) {
+                    console.error(`Error disconnecting timed out cleanup connection:`, e);
+                }
+
                 resolve(false);
             }, 5000);
 
             try {
-                // Get IPC connection
-                const ipcClient = await createIPCConnection(credHash);
+                // Create a new connection with the unique ID
+                const socketPath = getSocketPath();
+                let connected = false;
 
-                if (!ipcClient) {
-                    clearTimeout(timeout);
-                    return resolve(false);
-                }
+                ipc.connectTo(cleanupConnectionId, socketPath, () => {
+                    ipc.of[cleanupConnectionId].on('connect', () => {
+                        connected = true;
+                        console.log(`Cleanup connection established for ${nodeId} (${cleanupConnectionId})`);
 
-                // Set up response handler
-                const responseHandler = (data: any) => {
-                    clearTimeout(timeout);
-                    // Clean up this connection from the cache
-                    delete connectionCache[credHash];
-                    // Remove the listener to prevent memory leaks
-                    ipcClient.off('cleanupBot:response', responseHandler);
+                        // Set up response handler for cleanup response
+                        ipc.of[cleanupConnectionId].on('cleanupBot:response', (data: any) => {
+                            clearTimeout(timeout);
+                            // Clean up this connection from the cache
+                            delete connectionCache[credHash];
 
-                    try {
-                        // Disconnect this IPC connection
-                        ipc.disconnect('bot');
-                    } catch (err) {
-                        console.error('Error disconnecting IPC during cleanup:', err);
-                    }
+                            // Disconnect this IPC connection
+                            try {
+                                ipc.disconnect(cleanupConnectionId);
+                                console.log(`Disconnected cleanup connection ${cleanupConnectionId}`);
+                            } catch (err) {
+                                console.error(`Error disconnecting cleanup IPC connection:`, err);
+                            }
 
-                    resolve(data.success);
-                };
+                            resolve(data.success);
+                        });
 
-                ipcClient.on('cleanupBot:response', responseHandler);
+                        // Send the cleanup request
+                        ipc.of[cleanupConnectionId].emit('cleanupBot', {
+                            nodeId,
+                            credentialHash: credHash
+                        });
+                    });
 
-                // Send the cleanup request
-                ipcClient.emit('cleanupBot', {
-                    nodeId,
-                    credentialHash: credHash
+                    // Handle connection errors
+                    ipc.of[cleanupConnectionId].on('error', (err: any) => {
+                        console.error(`Error in cleanup connection (${cleanupConnectionId}):`, err);
+                        if (!connected) {
+                            clearTimeout(timeout);
+
+                            try {
+                                ipc.disconnect(cleanupConnectionId);
+                            } catch (e) {
+                                console.error(`Error disconnecting errored cleanup connection:`, e);
+                            }
+
+                            resolve(false);
+                        }
+                    });
                 });
             } catch (error) {
                 console.error('Error in cleanupBot request:', error);
                 clearTimeout(timeout);
+
+                try {
+                    ipc.disconnect(cleanupConnectionId);
+                } catch (e) {
+                    console.error(`Error disconnecting failed cleanup connection:`, e);
+                }
+
                 resolve(false);
             }
         });
