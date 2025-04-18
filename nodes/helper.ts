@@ -352,6 +352,15 @@ export const getRoles = async (that: any, selectedGuildIds: string[]): Promise<I
     const endMessage = ' - Close and reopen this node modal once you have made changes.';
 
     try {
+        // Check if any guilds are selected
+        if (!selectedGuildIds || selectedGuildIds.length === 0) {
+            // Return a helpful message instead of throwing an error
+            return [{
+                name: 'Please select at least one server first to see available roles' + endMessage,
+                value: 'false',
+            }];
+        }
+
         const credentials = await that.getCredentials('discordBotTriggerApi');
         const res = await connection(credentials);
 

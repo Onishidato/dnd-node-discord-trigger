@@ -79,11 +79,8 @@ export class DiscordTrigger implements INodeType {
                 try {
                     // @ts-ignore
                     const selectedGuilds = this.getNodeParameter('guildIds', []);
-                    if (!selectedGuilds.length) {
-                        // @ts-ignore
-                        throw new NodeOperationError(this.getNode(), 'Please select at least one server before choosing roles.');
-                    }
-
+                    // Instead of throwing an error, just pass the empty array to the helper
+                    // The helper will handle the case properly
                     return await getRolesHelper(this, selectedGuilds);
                 } catch (error) {
                     console.error('Error loading roles:', error);
