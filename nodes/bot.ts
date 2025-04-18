@@ -1394,7 +1394,8 @@ export default function (): void {
         // Add handler to get new messages from the queue
         ipc.server.on('getNewMessages', function(data, socket) {
             try {
-                const { nodeId } = data;
+                // Extract nodeId from nodeParameters to match the format in the rest of the codebase
+                const nodeId = data.nodeParameters?.nodeId;
 
                 if (!nodeId) {
                     console.error('Missing nodeId in getNewMessages event');
