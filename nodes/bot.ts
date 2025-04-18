@@ -277,10 +277,14 @@ export default function (): void {
                             // Before emitting message data, check if the workflow is still active
                             // We store this in the triggerNodes object
                             const nodeInfo = settings.triggerNodes[nodeId];
-                            if (!nodeInfo?.active) {
-                                console.log(`Skipping trigger for inactive workflow node: ${nodeId}`);
+                            if (!nodeInfo) {
+                                console.log(`Skipping trigger for unregistered node: ${nodeId}`);
                                 return;
                             }
+
+                            // Allow messages to be processed even if the node is not active
+                            // This is necessary for test workflows in n8n
+                            // The workflow will only actually execute if it's being tested or is active
 
                             console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}, guild: ${message.guild?.name || 'DM'} (${message.guild?.id || 'none'})`);
 
