@@ -227,6 +227,21 @@ export class DiscordTrigger implements INodeType {
                         self.emit([
                             self.helpers.returnJsonArray(messageCreateOptions),
                         ]);
+
+                        // Clean up placeholder when workflow execution finishes
+                        // Use setTimeout to give the workflow time to start processing before notifying completion
+                        setTimeout(() => {
+                            if (ipc.of && ipc.of.bot) {
+                                try {
+                                    // Notify bot that workflow execution finished to clean up the placeholder
+                                    ipc.of.bot.emit('workflowExecutionFinished', {
+                                        nodeId: nodeId
+                                    });
+                                } catch (error) {
+                                    console.error(`Error notifying bot about workflow completion for node ${nodeId}:`, error);
+                                }
+                            }
+                        }, 3000); // Wait 3 seconds before cleaning up placeholder to let workflow execute
                     };
 
                     // Store the new handler in our map

@@ -48,6 +48,9 @@ const clients: { [credentialHash: string]: Client } = {};
 // Track active connections for cleanup
 const activeConnections: Set<string> = new Set();
 
+// Store placeholders for running workflows
+const placeholders: { [nodeId: string]: { message: Message, interval: NodeJS.Timeout } } = {};
+
 export default function (): void {
     // Prevent multiple instances of the bot server
     if (global.__n8nDiscordServerStarted) {
@@ -270,6 +273,11 @@ export default function (): void {
 
                             console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}, guild: ${message.guild?.name || 'DM'} (${message.guild?.id || 'none'})`);
 
+                            // Send placeholder message if configured
+                            if (parameters.placeholder && parameters.placeholder.trim() !== '') {
+                                sendPlaceholderMessage(nodeId, message.channel as TextChannel, parameters.placeholder);
+                            }
+
                             // Emit the message data specifically to this node
                             const messageData = {
                                 message: {
@@ -293,6 +301,68 @@ export default function (): void {
                 console.error('Error in message handler:', error);
             }
         });
+    }
+
+    // Function to send a placeholder message with animated dots
+    async function sendPlaceholderMessage(nodeId: string, channel: TextChannel, placeholderText: string): Promise<void> {
+        try {
+            // Clean up any existing placeholder for this node
+            clearPlaceholder(nodeId);
+
+            // Send the initial placeholder message
+            const message = await channel.send(placeholderText);
+
+            // Set up an interval to add animated dots
+            const dotsInterval = setInterval(async () => {
+                try {
+                    if (message.deletable) {
+                        const dots = ['.', '..', '...'];
+                        const currentTime = new Date().getTime();
+                        const dotIndex = Math.floor((currentTime / 1000) % 3);
+
+                        await message.edit(`${placeholderText}${dots[dotIndex]}`);
+                    } else {
+                        // Message was deleted, clear the interval
+                        clearInterval(dotsInterval);
+                        delete placeholders[nodeId];
+                    }
+                } catch (error) {
+                    console.error(`Error updating placeholder dots:`, error);
+                    clearInterval(dotsInterval);
+                    delete placeholders[nodeId];
+                }
+            }, 1000);
+
+            // Store the placeholder reference
+            placeholders[nodeId] = {
+                message,
+                interval: dotsInterval
+            };
+        } catch (error) {
+            console.error(`Error sending placeholder message:`, error);
+        }
+    }
+
+    // Function to clear a placeholder
+    function clearPlaceholder(nodeId: string): void {
+        if (placeholders[nodeId]) {
+            // Clear the interval
+            clearInterval(placeholders[nodeId].interval);
+
+            // Try to delete the message if it still exists
+            try {
+                if (placeholders[nodeId].message.deletable) {
+                    placeholders[nodeId].message.delete().catch(error => {
+                        console.error(`Error deleting placeholder message:`, error);
+                    });
+                }
+            } catch (error) {
+                console.error(`Error cleaning up placeholder:`, error);
+            }
+
+            // Remove from placeholder storage
+            delete placeholders[nodeId];
+        }
     }
 
     // Type for the message object sent to Discord
@@ -1058,6 +1128,32 @@ export default function (): void {
             } catch (e) {
                 console.error(`Error in cleanupBot:`, e);
                 ipc.server.emit(socket, 'cleanupBot:response', {
+                    success: false,
+                    error: String(e)
+                });
+            }
+        });
+
+        // Add handler to clean up placeholders when workflow execution is done
+        ipc.server.on('workflowExecutionFinished', function(data, socket) {
+            try {
+                const { nodeId } = data;
+
+                if (!nodeId) {
+                    console.error('Missing nodeId in workflowExecutionFinished event');
+                    return;
+                }
+
+                console.log(`Workflow execution finished for node ${nodeId}, cleaning up placeholder`);
+                clearPlaceholder(nodeId);
+
+                ipc.server.emit(socket, 'workflowExecutionFinished:response', {
+                    success: true,
+                    nodeId: nodeId
+                });
+            } catch (e) {
+                console.error(`Error handling workflow execution finished:`, e);
+                ipc.server.emit(socket, 'workflowExecutionFinished:response', {
                     success: false,
                     error: String(e)
                 });
