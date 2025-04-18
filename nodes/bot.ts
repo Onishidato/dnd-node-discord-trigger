@@ -154,37 +154,37 @@ export default function (): void {
                 let messageReference: Message | null = null;
                 let messageReferenceFetched = !message.reference;
 
-                // iterate through all relevant nodes for this client
+                // Instead of checking each node's parameters after common checks,
+                // process each node independently to ensure proper isolation
                 for (const nodeId of relevantNodeIds) {
                     try {
                         const parameters = (settings.triggerNodes[nodeId] as ITriggerNode)?.parameters;
                         if (!parameters) continue;
 
+                        // Get specific pattern for this node
                         const pattern = parameters.pattern as string;
                         const triggerOnExternalBot = parameters.additionalFields?.externalBotTrigger || false;
 
-                        // ignore messages of other bots
+                        // Check if this node should process bot messages
                         if (!triggerOnExternalBot) {
                             if (message.author.bot || message.author.system) continue;
                         }
                         else if (message.author.id === message.client.user?.id) continue;
 
-                        // Check if we need to process this message for this guild
-                        // If guildIds is empty, we process messages from ALL guilds the bot can access
+                        // Check guild restrictions for this specific node
                         if (parameters.guildIds && parameters.guildIds.length > 0) {
-                            // Only process messages from the specified guilds
                             const isInGuild = parameters.guildIds.includes(message.guild?.id);
                             if (!isInGuild) continue;
                         }
 
-                        // check if executed by the proper role
+                        // Check role restrictions for this specific node
                         const userRoles = message.member?.roles.cache.map((role) => role.id);
                         if (parameters.roleIds && parameters.roleIds.length) {
                             const hasRole = parameters.roleIds.some((role: string) => userRoles?.includes(role));
                             if (!hasRole) continue;
                         }
 
-                        // check if executed by the proper channel
+                        // Check channel restrictions for this specific node
                         if (parameters.channelIds && parameters.channelIds.length) {
                             const isInChannel = parameters.channelIds.some((channelId: string) =>
                                 message.channel.id?.includes(channelId)
@@ -192,12 +192,12 @@ export default function (): void {
                             if (!isInChannel) continue;
                         }
 
-                        // check if the message has to have a message that was responded to
+                        // Check reference requirement for this specific node
                         if (parameters.messageReferenceRequired && !message.reference) {
                             continue;
                         }
 
-                        // fetch the message reference only once and only if needed, even if multiple triggers are installed
+                        // Fetch message reference if needed - only once per message processing
                         if (!messageReferenceFetched && message.reference) {
                             try {
                                 messageReference = await message.fetchReference();
@@ -207,32 +207,31 @@ export default function (): void {
                             }
                         }
 
-                        // escape the special chars to properly trigger the message
+                        const clientId = client.user?.id;
+                        if (!clientId) continue;
+
+                        // Prepare regex and other checks for this specific node
                         const escapedTriggerValue = String(parameters.value || '')
                             .replace(/[|\\{}()[\]^$+*?.]/g, '\\$&')
                             .replace(/-/g, '\\x2d');
 
-                        const clientId = client.user?.id;
-                        if (!clientId) continue;
-
-                        // Improved bot mention detection with regex to catch all variations
+                        // Bot mention detection for this specific node
                         const mentionRegex = new RegExp(`<@!?${clientId}>|<@${clientId}>`, 'g');
                         const botMention = message.mentions.users.some((user) => user.id === clientId) ||
                                         mentionRegex.test(message.content || '');
 
-                        // Check if message contains image attachments for image processing patterns
+                        // Image attachment check for this specific node
                         const hasImageAttachments = message.attachments.some(attachment => {
                             const contentType = attachment.contentType?.toLowerCase() || '';
                             return contentType.startsWith('image/');
                         });
 
+                        // Select regex pattern based on this node's configuration
                         let regStr = `^${escapedTriggerValue}$`;
 
-                        // return if we expect a bot mention, but bot is not mentioned
                         if (pattern === "botMention" && !botMention) {
                             continue;
                         }
-                        // Continue if we expect an image but there's no image attachment
                         else if (pattern === "containImage" && !hasImageAttachments) {
                             continue;
                         }
@@ -250,25 +249,20 @@ export default function (): void {
                         const reg = new RegExp(regStr, parameters.caseSensitive ? '' : 'i');
                         const messageContent = message.content || '';
 
-                        // If pattern is botMention or containImage, we've already checked it above
-                        // Otherwise, check if the content matches the regex
+                        // Check if the message matches this node's pattern
                         if ((pattern === "botMention" && botMention) ||
                             (pattern === "containImage" && hasImageAttachments) ||
                             (pattern !== "botMention" && pattern !== "containImage" && reg.test(messageContent))) {
 
-                            // For bot mentions, make a clean copy of the message content with the mention removed
-                            // This helps when we want to process commands that start with a mention
+                            // For bot mentions, clean up the content
                             let processedContent = messageContent;
                             if (pattern === "botMention" && botMention) {
-                                // Remove bot mention patterns from the content
                                 processedContent = messageContent.replace(mentionRegex, '').trim();
                             }
 
                             console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}, guild: ${message.guild?.name || 'DM'} (${message.guild?.id || 'none'})`);
 
-                            // Emit the message data to n8n
-                            // Include processedContent directly in the message object we're sending
-                            // rather than trying to modify the original message object
+                            // Emit the message data specifically to this node
                             const messageData = {
                                 message: {
                                     ...message,
@@ -280,8 +274,7 @@ export default function (): void {
                                 nodeId: nodeId
                             };
 
-                            // Broadcast the message to all connected clients
-                            // This ensures the message reaches the right trigger node
+                            // Send message only to this specific node
                             ipc.server.broadcast('messageCreate', messageData);
                         }
                     } catch (e) {
