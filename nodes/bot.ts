@@ -720,20 +720,25 @@ export default function (): void {
         // Handle update trigger node status
         ipc.server.on('updateTriggerNodeStatus', function(data, socket) {
             try {
-                const { nodeId, active } = data.nodeParameters;
-                // Use the credentialHash variable to avoid the unused variable warning
+                // Support both data formats for consistency
+                // Format 1: { nodeParameters: { nodeId, active }, credentialHash: '...' }
+                // Format 2: { nodeId: '...', active: true/false }
+                const nodeId = data.nodeParameters?.nodeId || data.nodeId;
+                const active = data.nodeParameters?.active !== undefined ? data.nodeParameters.active : data.active;
                 const credHash = data.credentialHash;
 
                 if (!nodeId || typeof active !== 'boolean') {
-                    console.error('Missing required data for updateTriggerNodeStatus');
-                    ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: false });
+                    console.error('Missing nodeId or active status in updateTriggerNodeStatus event');
+                    ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                        success: false,
+                        error: 'Missing nodeId or active status'
+                    });
                     return;
                 }
 
-                // Update the node's active status
                 if (settings.triggerNodes[nodeId]) {
-                    (settings.triggerNodes[nodeId] as any).active = active;
-                    console.log(`Updated trigger node ${nodeId} active status: ${active}`);
+                    settings.triggerNodes[nodeId].active = active;
+                    console.log(`Updated trigger node ${nodeId} status to ${active}`);
 
                     // Also update in the bot instance if available
                     if (credHash && settings.botInstances[credHash]) {
@@ -746,14 +751,24 @@ export default function (): void {
                         };
                     }
 
-                    ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: true });
+                    ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                        success: true,
+                        nodeId: nodeId,
+                        active: active
+                    });
                 } else {
-                    console.error(`Node ${nodeId} not found for status update`);
-                    ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: false, error: 'Node not found' });
+                    console.error(`Trigger node ${nodeId} not found`);
+                    ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                        success: false,
+                        error: `Trigger node ${nodeId} not found`
+                    });
                 }
-            } catch (error: any) {
-                console.error('Error handling updateTriggerNodeStatus:', error);
-                ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: false, error: error.message });
+            } catch (e) {
+                console.error(`Error handling updateTriggerNodeStatus:`, e);
+                ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                    success: false,
+                    error: String(e)
+                });
             }
         });
 
