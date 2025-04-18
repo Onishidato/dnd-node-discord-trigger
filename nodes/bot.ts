@@ -16,9 +16,17 @@ import ipc from 'node-ipc';
 import {
     ICredentials,
 } from './helper';
-import settings from './settings';
 import * as fs from 'fs';
 import * as os from 'os';
+
+// Add type declaration for settings
+import settings from './settings';
+declare module './settings' {
+    interface Settings {
+        triggerNodes: { [key: string]: ITriggerNode };
+        botInstances: { [key: string]: IBotInstance };
+    }
+}
 
 // Add type declaration for the global property
 declare global {
@@ -29,17 +37,65 @@ declare global {
 
 // Define types for the settings objects to improve type safety
 interface ITriggerNode {
-    parameters: Record<string, any>;
-    credentialHash: string;
+    node: INode;
+    webhook: IWebhookData;
+    credHash: string;
+    credentialHash: string; // Add this to match settings.ts
+    workflowId: string;
+    executeTrigger: (msg: Message) => Promise<IWorkflowExecuteAdditionalData>;
+    active: boolean; // Changed from optional to required to avoid type conflicts
+    parameters: {
+        id: string;
+        name: string;
+        type: string;
+        pattern?: string;
+        value?: string;
+        caseSensitive?: boolean;
+        guildIds?: string[];
+        roleIds?: string[];
+        channelIds?: string[];
+        messageReferenceRequired?: boolean;
+        additionalFields?: {
+            externalBotTrigger?: boolean;
+        };
+        placeholder?: string;
+    };
 }
 
+// Add missing interface definitions
+interface INode {
+    // Define minimum required properties
+    id: string;
+    name: string;
+    type: string;
+}
+
+interface IWebhookData {
+    // Define minimum required properties
+    httpMethod: string;
+    path: string;
+}
+
+interface IWorkflow {
+    // Define minimum required properties
+    id: string;
+}
+
+interface IWorkflowExecuteAdditionalData {
+    // Define minimum required properties
+}
+
+// Update IBotInstance interface
 interface IBotInstance {
+    id: string;
+    client: Client;
+    triggerNodes: { [key: string]: ITriggerNode };
     ready: boolean;
     login: boolean;
     clientId: string;
     token: string;
-    baseUrl: string;
-    parameters: Record<string, any>;
+    baseUrl: string; // Changed from optional to required to match settings.ts
+    parameters: any; // Changed from optional to required to match implementation
 }
 
 // Store clients for different Discord accounts
@@ -50,6 +106,9 @@ const activeConnections: Set<string> = new Set();
 
 // Store placeholders for running workflows
 const placeholders: { [nodeId: string]: { message: Message, interval: NodeJS.Timeout } } = {};
+
+// Store message queues for each node
+const messageQueues: { [nodeId: string]: any[] } = {};
 
 export default function (): void {
     // Prevent multiple instances of the bot server
@@ -145,7 +204,7 @@ export default function (): void {
                 // Get all relevant node IDs for this client
                 const relevantNodeIds = Object.entries(settings.triggerNodes)
                     .filter(([_, data]) => {
-                        const credHash = (data as ITriggerNode).credentialHash;
+                        const credHash = (data as unknown as ITriggerNode).credHash;
                         const botInstance = settings.botInstances[credHash] as IBotInstance | undefined;
                         return botInstance && botInstance.clientId === client.application?.id;
                     })
@@ -161,7 +220,7 @@ export default function (): void {
                 // process each node independently to ensure proper isolation
                 for (const nodeId of relevantNodeIds) {
                     try {
-                        const parameters = (settings.triggerNodes[nodeId] as ITriggerNode)?.parameters;
+                        const parameters = (settings.triggerNodes[nodeId] as unknown as ITriggerNode)?.parameters;
                         if (!parameters) continue;
 
                         // Get specific pattern for this node
@@ -176,7 +235,7 @@ export default function (): void {
 
                         // Check guild restrictions for this specific node
                         if (parameters.guildIds && parameters.guildIds.length > 0) {
-                            const isInGuild = parameters.guildIds.includes(message.guild?.id);
+                            const isInGuild = message.guild?.id ? parameters.guildIds.includes(message.guild.id) : false;
                             if (!isInGuild) continue;
                         }
 
@@ -583,22 +642,179 @@ export default function (): void {
 
         ipc.server.on('triggerNodeRegistered', function(data, socket) {
             try {
-                const { nodeId, parameters, credentialHash, active } = data;
-                if (!nodeId || !credentialHash) {
-                    console.error('Missing required data for node registration');
+                const { nodeId } = data.nodeParameters;
+
+                if (!nodeId) {
+                    console.error('Missing nodeId in triggerNodeRegistered request');
+                    ipc.server.emit(socket, `callback:triggerNodeRegistered`, { success: false });
                     return;
                 }
 
-                // Store the node parameters with the credential hash
-                settings.triggerNodes[nodeId] = {
-                    parameters,
-                    credentialHash,
-                    active: active || false,
-                };
+                // Track this node for future reference
+                settings.triggerNodes[nodeId] = data.nodeParameters;
+                console.log(`Registered trigger node ${nodeId}`);
 
-                console.log(`Trigger node ${nodeId} registered successfully with credential hash ${credentialHash}`);
+                // Initialize message queue for this node if it doesn't exist
+                if (!messageQueues[nodeId]) {
+                    messageQueues[nodeId] = [];
+                }
+
+                ipc.server.emit(socket, `callback:triggerNodeRegistered`, { success: true });
             } catch (error) {
-                console.error('Error registering trigger node:', error);
+                console.error('Error handling triggerNodeRegistered:', error);
+                ipc.server.emit(socket, `callback:triggerNodeRegistered`, { success: false, error: error.message });
+            }
+        });
+
+        // Handle requests for new messages
+        ipc.server.on('getNewMessages', function(data, socket) {
+            try {
+                const { nodeId } = data.nodeParameters;
+
+                if (!nodeId) {
+                    console.error('Missing nodeId in getNewMessages request');
+                    ipc.server.emit(socket, `callback:getNewMessages`, { success: false });
+                    return;
+                }
+
+                // Return any queued messages for this node
+                const messages = messageQueues[nodeId] || [];
+
+                // Clear the queue after sending
+                messageQueues[nodeId] = [];
+
+                ipc.server.emit(socket, `callback:getNewMessages`, {
+                    success: true,
+                    messages: messages
+                });
+            } catch (error) {
+                console.error('Error handling getNewMessages:', error);
+                ipc.server.emit(socket, `callback:getNewMessages`, {
+                    success: false,
+                    error: error.message
+                });
+            }
+        });
+
+        // Handle workflow execution finished notification
+        ipc.server.on('workflowExecutionFinished', function(data, socket) {
+            try {
+                const { executionId, nodeId } = data.nodeParameters;
+
+                if (!nodeId || !executionId) {
+                    console.error('Missing nodeId or executionId in workflowExecutionFinished request');
+                    ipc.server.emit(socket, `callback:workflowExecutionFinished`, { success: false });
+                    return;
+                }
+
+                // Clear any placeholder messages that might have been sent
+                // when this workflow started executing
+
+                ipc.server.emit(socket, `callback:workflowExecutionFinished`, { success: true });
+            } catch (error) {
+                console.error('Error handling workflowExecutionFinished:', error);
+                ipc.server.emit(socket, `callback:workflowExecutionFinished`, { success: false, error: error.message });
+            }
+        });
+
+        // Handle update trigger node status
+        ipc.server.on('updateTriggerNodeStatus', function(data, socket) {
+            try {
+                const { nodeId, active } = data.nodeParameters;
+                // Use the credentialHash variable to avoid the unused variable warning
+                const credHash = data.credentialHash;
+
+                if (!nodeId || typeof active !== 'boolean') {
+                    console.error('Missing required data for updateTriggerNodeStatus');
+                    ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: false });
+                    return;
+                }
+
+                // Update the node's active status
+                if (settings.triggerNodes[nodeId]) {
+                    (settings.triggerNodes[nodeId] as any).active = active;
+                    console.log(`Updated trigger node ${nodeId} active status: ${active}`);
+
+                    // Also update in the bot instance if available
+                    if (credHash && settings.botInstances[credHash]) {
+                        if ((!settings.botInstances[credHash] as any).triggerNodes) {
+                            (settings.botInstances[credHash] as any).triggerNodes = {};
+                        }
+                        (settings.botInstances[credHash] as any).triggerNodes[nodeId] = {
+                            ...(settings.triggerNodes[nodeId] as any),
+                            active
+                        };
+                    }
+
+                    ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: true });
+                } else {
+                    console.error(`Node ${nodeId} not found for status update`);
+                    ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: false, error: 'Node not found' });
+                }
+            } catch (error: any) {
+                console.error('Error handling updateTriggerNodeStatus:', error);
+                ipc.server.emit(socket, `callback:updateTriggerNodeStatus`, { success: false, error: error.message });
+            }
+        });
+
+        // Handle node deactivation
+        ipc.server.on('deactivateNode', function(data, socket) {
+            try {
+                const { nodeId } = data.nodeParameters;
+
+                if (!nodeId) {
+                    console.error('Missing nodeId in deactivateNode request');
+                    ipc.server.emit(socket, `callback:deactivateNode`, { success: false });
+                    return;
+                }
+
+                // Clean up any resources for this node
+                if (messageQueues[nodeId]) {
+                    delete messageQueues[nodeId];
+                }
+
+                // Remove from settings if tracked
+                if (settings.triggerNodes[nodeId]) {
+                    delete settings.triggerNodes[nodeId];
+                }
+
+                ipc.server.emit(socket, `callback:deactivateNode`, {
+                    success: true
+                });
+            } catch (error) {
+                console.error('Error handling deactivateNode:', error);
+                ipc.server.emit(socket, `callback:deactivateNode`, {
+                    success: false,
+                    error: error.message
+                });
+            }
+        });
+
+        // Handle cleanup bot request
+        ipc.server.on('cleanupBot', function(data, socket) {
+            try {
+                const { nodeId, credentialHash } = data;
+
+                if (!nodeId || !credentialHash) {
+                    console.error('Missing required data for cleanupBot');
+                    ipc.server.emit(socket, 'cleanupBot:response', { success: false });
+                    return;
+                }
+
+                // Clean up resources for this node
+                clearPlaceholder(nodeId);
+                delete messageQueues[nodeId];
+
+                // Remove from tracked nodes
+                if (settings.triggerNodes[nodeId]) {
+                    delete settings.triggerNodes[nodeId];
+                    console.log(`Cleaned up node ${nodeId}`);
+                }
+
+                ipc.server.emit(socket, 'cleanupBot:response', { success: true });
+            } catch (error) {
+                console.error('Error in cleanupBot:', error);
+                ipc.server.emit(socket, 'cleanupBot:response', { success: false });
             }
         });
 
@@ -1104,7 +1320,7 @@ export default function (): void {
 
                 // Check if this was the last node using this credential hash
                 const remainingNodes = Object.entries(settings.triggerNodes)
-                    .filter(([_, data]) => (data as ITriggerNode).credentialHash === credentialHash)
+                    .filter(([_, data]) => (data as unknown as ITriggerNode).credHash === credentialHash)
                     .map(([id, _]) => id);
 
                 console.log(`Remaining nodes for credential hash ${credentialHash}: ${remainingNodes.length}`);
@@ -1152,7 +1368,7 @@ export default function (): void {
         // Add handler to clean up placeholders when workflow execution is done
         ipc.server.on('workflowExecutionFinished', function(data, socket) {
             try {
-                const { nodeId } = data;
+                const { nodeId } = data.nodeParameters;
 
                 if (!nodeId) {
                     console.error('Missing nodeId in workflowExecutionFinished event');
@@ -1174,8 +1390,216 @@ export default function (): void {
                 });
             }
         });
+
+        // Add handler to get new messages from the queue
+        ipc.server.on('getNewMessages', function(data, socket) {
+            try {
+                const { nodeId } = data;
+
+                if (!nodeId) {
+                    console.error('Missing nodeId in getNewMessages event');
+                    ipc.server.emit(socket, 'getNewMessages:response', {
+                        success: false,
+                        error: 'Missing nodeId'
+                    });
+                    return;
+                }
+
+                const messages = messageQueues[nodeId] || [];
+                messageQueues[nodeId] = []; // Clear the queue after fetching
+
+                ipc.server.emit(socket, 'getNewMessages:response', {
+                    success: true,
+                    messages: messages
+                });
+            } catch (e) {
+                console.error(`Error handling getNewMessages:`, e);
+                ipc.server.emit(socket, 'getNewMessages:response', {
+                    success: false,
+                    error: String(e)
+                });
+            }
+        });
+
+        // Add handler to update trigger node status
+        ipc.server.on('updateTriggerNodeStatus', function(data, socket) {
+            try {
+                const { nodeId, active } = data;
+
+                if (!nodeId || typeof active !== 'boolean') {
+                    console.error('Missing nodeId or active status in updateTriggerNodeStatus event');
+                    ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                        success: false,
+                        error: 'Missing nodeId or active status'
+                    });
+                    return;
+                }
+
+                if (settings.triggerNodes[nodeId]) {
+                    settings.triggerNodes[nodeId].active = active;
+                    console.log(`Updated trigger node ${nodeId} status to ${active}`);
+                    ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                        success: true,
+                        nodeId: nodeId,
+                        active: active
+                    });
+                } else {
+                    console.error(`Trigger node ${nodeId} not found`);
+                    ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                        success: false,
+                        error: `Trigger node ${nodeId} not found`
+                    });
+                }
+            } catch (e) {
+                console.error(`Error handling updateTriggerNodeStatus:`, e);
+                ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
+                    success: false,
+                    error: String(e)
+                });
+            }
+        });
     });
 
     ipc.server.start();
     console.log('IPC server started');
+}
+
+// Update Discord client properties for a specific bot instance
+export const updateDiscordClientProperties = async (triggerNode: ITriggerNode) => {
+    try {
+        const credHash = triggerNode.credHash;
+        if (!credHash) {
+            // Skip if no credential hash is available
+            return;
+        }
+
+        if (settings.botInstances[credHash]) {
+            // We already have a bot instance for this credential, update the properties
+            (settings.botInstances[credHash] as any).triggerNodes =
+                (settings.botInstances[credHash] as any).triggerNodes || {};
+            (settings.botInstances[credHash] as any).triggerNodes[triggerNode.parameters.id] = triggerNode;
+        }
+    } catch (e: any) {
+        console.log(`Error updating Discord client properties: ${e.message}`);
+    }
+};
+
+// Remove a Discord client
+export const removeDiscordClient = async (triggerNode: ITriggerNode) => {
+    try {
+        const credHash = triggerNode.credHash;
+        if (!credHash || !settings.botInstances[credHash]) {
+            // No bot instance found for this credential
+            return;
+        }
+
+        // Remove the trigger node from the bot instance
+        if ((settings.botInstances[credHash] as any).triggerNodes?.[triggerNode.parameters.id]) {
+            delete (settings.botInstances[credHash] as any).triggerNodes[triggerNode.parameters.id];
+        }
+
+        // Check if there are any trigger nodes left
+        const triggerNodes = (settings.botInstances[credHash] as any).triggerNodes || {};
+        if (Object.keys(triggerNodes).length === 0) {
+            // No trigger nodes left, destroy the bot instance
+            if ((settings.botInstances[credHash] as any).client) {
+                (settings.botInstances[credHash] as any).client.destroy();
+            }
+            delete settings.botInstances[credHash];
+        }
+    } catch (e: any) {
+        console.log(`Error removing Discord client: ${e.message}`);
+    }
+};
+
+// Create a new bot instance for a credential hash
+export async function createBotInstance(credHash: string, parameters: any = {}): Promise<IBotInstance> {
+    try {
+        // Check if there's already a bot instance for this credential
+        if (settings.botInstances[credHash]) {
+            return settings.botInstances[credHash] as IBotInstance;
+        }
+
+        // Create a new bot instance
+        const newInstance: IBotInstance = {
+            id: credHash,
+            client: null!, // Will be initialized when credentials are provided
+            triggerNodes: {},
+            ready: false,
+            login: false,
+            clientId: '',
+            token: '',
+            baseUrl: '', // Add empty string as default value
+            parameters: parameters
+        };
+
+        settings.botInstances[credHash] = newInstance;
+
+        console.log(`Created new bot instance for ${credHash}`);
+        return newInstance;
+    } catch (error: any) {
+        console.error(`Error creating bot instance: ${error}`);
+        throw error;
+    }
+}
+
+// Add a trigger node to the list of nodes for a specific bot instance
+export function addTriggerNode(type: string, credHash: string, node: ITriggerNode, workflow: IWorkflow): void {
+    try {
+        // Make sure the node has all required properties
+        if (!node.parameters) {
+            node.parameters = {
+                id: node.node.id,
+                name: node.node.name,
+                type: node.node.type
+            };
+        }
+        // Update the node with credential hash
+        node.credHash = credHash;
+        node.credentialHash = credHash; // Add this to match settings.ts
+        node.workflowId = workflow.id;
+
+        // Ensure active property is set
+        if (node.active === undefined) {
+            node.active = false;
+        }
+
+        // Add or update the trigger node in settings (removed duplicate line)
+        settings.triggerNodes[node.parameters.id] = node;
+
+        // Also add it to the bot instance's trigger nodes
+        if (settings.botInstances[credHash]) {
+            if (!(settings.botInstances[credHash] as any).triggerNodes) {
+                (settings.botInstances[credHash] as any).triggerNodes = {};
+            }
+            (settings.botInstances[credHash] as any).triggerNodes[node.parameters.id] = node;
+        }
+
+        console.log(`Added ${type} trigger node ${node.parameters.id} to bot instance ${credHash}`);
+    } catch (error) {
+        console.error(`Error adding trigger node: ${error}`);
+        throw error;
+    }
+}
+
+export async function registerMessage(credHash: string | undefined, node: ITriggerNode, workflow: IWorkflow): Promise<void> {
+    try {
+        if (!credHash) {
+            throw new Error('Credential hash is undefined');
+        }
+
+        // Create bot instance if it doesn't exist
+        if (!settings.botInstances[credHash]) {
+            await createBotInstance(credHash, node.parameters);
+        }
+
+        // Add message trigger to the list
+        addTriggerNode('message', credHash, node, workflow);
+
+        // Log successful registration
+        console.log(`Registered message trigger for workflow ${workflow.id}, node ${node.parameters.name}`);
+    } catch (error) {
+        console.error('Error registering message trigger:', error);
+        throw error;
+    }
 }
