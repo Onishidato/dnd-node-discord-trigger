@@ -152,7 +152,7 @@ export default function (): void {
 
                 // resolve the message reference if it exists
                 let messageReference: Message | null = null;
-                let messageReferenceFetched = !(message.reference); // Fixed typo in variable name
+                let messageReferenceFetched = !message.reference;
 
                 // iterate through all relevant nodes for this client
                 for (const nodeId of relevantNodeIds) {
@@ -168,6 +168,14 @@ export default function (): void {
                             if (message.author.bot || message.author.system) continue;
                         }
                         else if (message.author.id === message.client.user?.id) continue;
+
+                        // Check if we need to process this message for this guild
+                        // If guildIds is empty, we process messages from ALL guilds the bot can access
+                        if (parameters.guildIds && parameters.guildIds.length > 0) {
+                            // Only process messages from the specified guilds
+                            const isInGuild = parameters.guildIds.includes(message.guild?.id);
+                            if (!isInGuild) continue;
+                        }
 
                         // check if executed by the proper role
                         const userRoles = message.member?.roles.cache.map((role) => role.id);
@@ -256,7 +264,7 @@ export default function (): void {
                                 processedContent = messageContent.replace(mentionRegex, '').trim();
                             }
 
-                            console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}`);
+                            console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}, guild: ${message.guild?.name || 'DM'} (${message.guild?.id || 'none'})`);
 
                             // Emit the message data to n8n
                             // Include processedContent directly in the message object we're sending
