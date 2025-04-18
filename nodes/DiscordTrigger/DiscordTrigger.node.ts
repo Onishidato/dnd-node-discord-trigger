@@ -17,11 +17,15 @@ import {
     getChannels as getChannelsHelper,
     getRoles as getRolesHelper,
     getGuilds as getGuildsHelper,
+    cleanupBot,
 } from '../helper';
-import settings from '../settings';
+import { getCredentialHash } from '../settings';
 
-// we start the bot if we are in the main process
-if (!process.send) bot();
+// Only start the bot in the main process
+if (!process.send) {
+    console.log('Starting bot in main process...');
+    bot();
+}
 
 export class DiscordTrigger implements INodeType {
     description: INodeTypeDescription = {
@@ -48,165 +52,223 @@ export class DiscordTrigger implements INodeType {
     methods = {
         loadOptions: {
             async getGuilds(): Promise<INodePropertyOptions[]> {
-                return await getGuildsHelper(this).catch((e) => e) as { name: string; value: string }[];
+                try {
+                    return await getGuildsHelper(this);
+                } catch (error) {
+                    console.error('Error loading guilds:', error);
+                    return [{ name: `Error: ${error.message}`, value: 'false' }];
+                }
             },
             async getChannels(): Promise<INodePropertyOptions[]> {
-                // @ts-ignore
-                const selectedGuilds = this.getNodeParameter('guildIds', []);
-                if (!selectedGuilds.length) {
+                try {
                     // @ts-ignore
-                    throw new NodeOperationError('Please select at least one server before choosing channels.');
-                }
+                    const selectedGuilds = this.getNodeParameter('guildIds', []);
+                    if (!selectedGuilds.length) {
+                        // @ts-ignore
+                        throw new NodeOperationError(this.getNode(), 'Please select at least one server before choosing channels.');
+                    }
 
-                return await getChannelsHelper(this, selectedGuilds).catch((e) => e) as { name: string; value: string }[];
+                    return await getChannelsHelper(this, selectedGuilds);
+                } catch (error) {
+                    console.error('Error loading channels:', error);
+                    return [{ name: `Error: ${error.message}`, value: 'false' }];
+                }
             },
             async getRoles(): Promise<INodePropertyOptions[]> {
-                // @ts-ignore
-                const selectedGuilds = this.getNodeParameter('guildIds', []);
-                if (!selectedGuilds.length) {
+                try {
                     // @ts-ignore
-                    throw new NodeOperationError('Please select at least one server before choosing channels.');
-                }
-                
+                    const selectedGuilds = this.getNodeParameter('guildIds', []);
+                    if (!selectedGuilds.length) {
+                        // @ts-ignore
+                        throw new NodeOperationError(this.getNode(), 'Please select at least one server before choosing roles.');
+                    }
 
-                return await getRolesHelper(this, selectedGuilds).catch((e) => e) as { name: string; value: string }[];
+                    return await getRolesHelper(this, selectedGuilds);
+                } catch (error) {
+                    console.error('Error loading roles:', error);
+                    return [{ name: `Error: ${error.message}`, value: 'false' }];
+                }
             },
         },
     };
 
     async trigger(this: ITriggerFunctions): Promise<ITriggerResponse> {
+        try {
+            const credentials = await this.getCredentials('discordBotTriggerApi') as unknown as ICredentials;
 
-        const credentials = (await this.getCredentials('discordBotTriggerApi').catch((e) => e)) as any as ICredentials;
+            if (!credentials?.token) {
+                console.log("No token given.");
+                throw new NodeOperationError(this.getNode(), "Discord bot token is required");
+            }
 
-        if (!credentials?.token) {
-            console.log("No token given.");
-            
-            return {};
+            // Generate credential hash from bot token and client ID
+            const credentialHash = getCredentialHash(credentials.clientId, credentials.token);
+
+            // Establish connection with proper error handling
+            try {
+                await connection(credentials);
+                console.log(`Connection established for node ${this.getNode().id}`);
+            } catch (error) {
+                console.error(`Connection error for node ${this.getNode().id}:`, error);
+                throw new NodeOperationError(this.getNode(), `Failed to connect to Discord bot: ${error.message}`);
+            }
+
+            // Setup message listener for this trigger node
+            const setupMessageListener = () => {
+                return new Promise<void>((resolve) => {
+                    // Store a reference to the ITriggerFunctions
+                    const self = this;
+
+                    // Get node parameters to send to the bot
+                    const parameters: Record<string, any> = {};
+                    Object.keys(this.getNode().parameters).forEach((key) => {
+                        parameters[key] = this.getNodeParameter(key, '') as any;
+                    });
+
+                    console.log(`Registering trigger node ${this.getNode().id} with parameters:`, parameters);
+
+                    // Register this node with the bot
+                    ipc.of.bot.emit('triggerNodeRegistered', {
+                        parameters,
+                        active: this.getWorkflow().active,
+                        credentialHash: credentialHash,
+                        nodeId: this.getNode().id,
+                    });
+
+                    // Set up message handler for this node
+                    ipc.of.bot.on('messageCreate', function(this: any, { message, author, nodeId, messageReference, referenceAuthor }: any) {
+                        if (self.getNode().id === nodeId) {
+                            // Debug logging to check message content
+                            console.log(`Received message for node ${nodeId}`);
+
+                            // Check if any attachments are images
+                            const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
+                                const contentType = attachment.contentType?.toLowerCase() || '';
+                                return contentType.startsWith('image/');
+                            }) : [];
+
+                            // Format image data for AI services
+                            const geminiReadyImages = imageAttachments.map((attachment: any) => ({
+                                url: attachment.url,
+                                mimeType: attachment.contentType,
+                                width: attachment.width,
+                                height: attachment.height,
+                                size: attachment.size
+                            }));
+
+                            // Prepare message data to emit
+                            const messageCreateOptions = {
+                                id: message.id,
+                                content: message.content,
+                                processedContent: message.processedContent || message.content,
+                                channelId: message.channelId,
+                                authorId: author.id,
+                                authorName: author.username,
+                                timestamp: message.createdTimestamp,
+                                listenValue: self.getNodeParameter('value', ''),
+                                authorIsBot: author.bot || author.system,
+                                referenceId: null,
+                                referenceContent: null,
+                                referenceAuthorId: null,
+                                referenceAuthorName: null,
+                                referenceTimestamp: null,
+                                hasAttachments: message.attachments?.size > 0,
+                                attachments: message.attachments ? Array.from(message.attachments.values()).map((attachment: any) => ({
+                                    id: attachment.id,
+                                    url: attachment.url,
+                                    proxyUrl: attachment.proxyURL,
+                                    filename: attachment.name,
+                                    contentType: attachment.contentType,
+                                    size: attachment.size,
+                                    width: attachment.width,
+                                    height: attachment.height,
+                                    description: attachment.description,
+                                    ephemeral: attachment.ephemeral,
+                                })) : [],
+                                hasImages: imageAttachments.length > 0,
+                                imageCount: imageAttachments.length,
+                                geminiImages: geminiReadyImages,
+                                geminiPromptTemplate: imageAttachments.length > 0 ?
+                                    "Analyze this image and describe what you see in detail." :
+                                    "No images attached to analyze."
+                            };
+
+                            // Add reference message data if present
+                            if (messageReference) {
+                                messageCreateOptions.referenceId = messageReference.id;
+                                messageCreateOptions.referenceContent = messageReference.content;
+                                messageCreateOptions.referenceAuthorId = referenceAuthor.id;
+                                messageCreateOptions.referenceAuthorName = referenceAuthor.username;
+                                messageCreateOptions.referenceTimestamp = messageReference.createdTimestamp;
+                            }
+
+                            // Emit message data to trigger workflow execution
+                            self.emit([
+                                self.helpers.returnJsonArray(messageCreateOptions),
+                            ]);
+                        }
+                    });
+
+                    // Handle connection errors and disconnects
+                    ipc.of.bot.on('error', function(this: any, err: any) {
+                        console.error(`IPC error in node ${self.getNode().id}:`, err);
+                    });
+
+                    resolve();
+                });
+            };
+
+            // Set up the message listener
+            await setupMessageListener();
+
+            // Return the cleanup function
+            return {
+                closeFunction: async () => {
+                    try {
+                        console.log(`Cleaning up trigger node ${this.getNode().id}`);
+
+                        // Check if the workflow is still active
+                        let isActive = false;
+                        try {
+                            isActive = await checkWorkflowStatus(
+                                credentials.baseUrl,
+                                credentials.apiKey,
+                                String(this.getWorkflow().id)
+                            );
+                        } catch (error) {
+                            console.error('Error checking workflow status:', error);
+                            // Assume not active if we can't check
+                            isActive = false;
+                        }
+
+                        // Clean up this node with the bot
+                        await cleanupBot(this.getNode().id, credentials);
+
+                        // Only disconnect if the workflow is not active anymore or if this is a manual test
+                        if (!isActive || this.getActivationMode() === 'manual') {
+                            console.log(`Workflow ${this.getWorkflow().id} is no longer active or was a manual test. Disconnecting.`);
+
+                            // Since node-ipc doesn't provide a standard way to remove specific listeners without references,
+                            // we'll just disconnect the client entirely which also removes all listeners
+                            if (ipc.of && ipc.of.bot) {
+                                try {
+                                    // Simply disconnect from the IPC server
+                                    // This will automatically clean up all event listeners
+                                    ipc.disconnect('bot');
+                                    console.log(`Disconnected from IPC server for node ${this.getNode().id}`);
+                                } catch (error) {
+                                    console.error('Error disconnecting from IPC server:', error);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`Error in trigger node cleanup for ${this.getNode().id}:`, error);
+                    }
+                },
+            };
+        } catch (error) {
+            console.error('Error in Discord Trigger setup:', error);
+            throw error;
         }
-
-        await connection(credentials).catch((e) => e);
-
-        ipc.connectTo('bot', () => {
-            console.log('Connected to IPC server');
-
-            const parameters: any = {};
-            Object.keys(this.getNode().parameters).forEach((key) => {
-                parameters[key] = this.getNodeParameter(key, '') as any;
-            });
-
-            console.log("registering ", this.getNode().id, "... ", parameters);
-            
-            ipc.of.bot.emit('triggerNodeRegistered', {
-                parameters,
-                active: this.getWorkflow().active,
-                credentials,
-                nodeId: this.getNode().id, // Unique to each node
-            });
-
-            ipc.of.bot.on('messageCreate', ({ message, author, nodeId, messageReference, referenceAuthor }: any) => {
-                if( this.getNode().id === nodeId) {
-                    
-                    // Debug logging to check message content and processedContent
-                    console.log('===== DISCORD TRIGGER NODE DEBUG =====');
-                    console.log(`Received message with content: "${message.content}"`);
-                    console.log(`Has processedContent property: ${Boolean(message.processedContent)}`);
-                    if (message.processedContent) {
-                        console.log(`Processed content: "${message.processedContent}"`);
-                    }
-                    console.log('====================================');
-                    
-                    // Check if any attachments are images
-                    const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
-                        const contentType = attachment.contentType?.toLowerCase() || '';
-                        return contentType.startsWith('image/');
-                    }) : [];
-                    
-                    // Format image data specifically for Google Gemini 2.0 Flash
-                    const geminiReadyImages = imageAttachments.map((attachment: any) => ({
-                        url: attachment.url,
-                        mimeType: attachment.contentType,
-                        // Adding fields that Gemini might need
-                        width: attachment.width,
-                        height: attachment.height,
-                        size: attachment.size
-                    }));
-
-                    const messageCreateOptions = {
-                        id: message.id,
-                        content: message.content,
-                        // Add the processed content that has any bot mentions removed
-                        processedContent: message.processedContent || message.content,
-                        channelId: message.channelId,
-                        authorId: author.id,
-                        authorName: author.username,
-                        timestamp: message.createdTimestamp,
-                        listenValue: this.getNodeParameter('value', ''),
-                        authorIsBot: author.bot || author.system,
-                        referenceId: null,
-                        referenceContent: null,
-                        referenceAuthorId: null,
-                        referenceAuthorName: null,
-                        referenceTimestamp: null,
-                        // Add attachment support
-                        hasAttachments: message.attachments?.size > 0,
-                        attachments: message.attachments ? Array.from(message.attachments.values()).map((attachment: any) => ({
-                            id: attachment.id,
-                            url: attachment.url,
-                            proxyUrl: attachment.proxyURL,
-                            filename: attachment.name,
-                            contentType: attachment.contentType,
-                            size: attachment.size,
-                            width: attachment.width,
-                            height: attachment.height,
-                            description: attachment.description,
-                            ephemeral: attachment.ephemeral,
-                        })) : [],
-                        // Add Gemini-specific fields for image analysis
-                        hasImages: imageAttachments.length > 0,
-                        imageCount: imageAttachments.length,
-                        geminiImages: geminiReadyImages,
-                        // Add a helper field with a sample prompt for Gemini
-                        geminiPromptTemplate: imageAttachments.length > 0 ? 
-                            "Analyze this image and describe what you see in detail." : 
-                            "No images attached to analyze."
-                    }
-
-                    if(messageReference) {
-                        messageCreateOptions.referenceId = messageReference.id;
-                        messageCreateOptions.referenceContent = messageReference.content;
-                        messageCreateOptions.referenceAuthorId = referenceAuthor.id;
-                        messageCreateOptions.referenceAuthorName = referenceAuthor.username;
-                        messageCreateOptions.referenceTimestamp = messageReference.createdTimestamp;
-                    }
-
-                    this.emit([
-                        this.helpers.returnJsonArray(messageCreateOptions),
-                    ]);
-                }
-            });
-        });
-
-        ipc.of.bot.on('disconnect', () => {
-            console.error('Disconnected from IPC server');
-        });
-
-        // Return the cleanup function
-        return {
-            closeFunction: async () => {
-                const credentials = (await this.getCredentials('discordBotTriggerApi').catch((e) => e)) as any as ICredentials;
-                const isActive = await checkWorkflowStatus(credentials.baseUrl, credentials.apiKey, String(this.getWorkflow().id));
-
-                // remove the node from being executed
-                console.log("removing trigger node");
-                
-                delete settings.triggerNodes[this.getNode().id];
-
-                // disable the node if the workflow is not activated, but keep it running if it was just the test node
-                if (!isActive || this.getActivationMode() !== 'manual') {
-                    console.log('Workflow stopped. Disconnecting bot...');
-                    ipc.disconnect('bot');
-                }
-            },
-        };
     }
 }
