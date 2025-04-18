@@ -18,8 +18,16 @@ export interface ICredentials {
 
 // Helper function to get a consistent socket path that matches the server
 function getSocketPath() {
-    // We'll use the fixed path that's working in the logs: /tmp/bot
-    return '/tmp/bot';
+    // Check if we're on Windows
+    const isWindows = process.platform === 'win32';
+
+    if (isWindows) {
+        // Use Windows-compatible path (named pipe)
+        return '\\\\.\\pipe\\discord-bot';
+    } else {
+        // Use Unix socket path
+        return '/tmp/bot';
+    }
 }
 
 // Initialize IPC configuration once to prevent duplicate setup
@@ -28,17 +36,28 @@ function initializeIPC() {
         return;
     }
 
-    // Configure IPC for Unix environment (Ubuntu 22.04)
+    // Check if we're on Windows
+    const isWindows = process.platform === 'win32';
+
+    // Configure IPC based on platform
     ipc.config.retry = 1500;
     ipc.config.silent = false; // Enable logs for debugging
-    ipc.config.socketRoot = '/tmp/';
-    ipc.config.appspace = '';
     ipc.config.maxRetries = 10;
     ipc.config.stopRetrying = false;
 
+    if (isWindows) {
+        // Windows-specific configuration
+        ipc.config.id = 'discord-bot-client';
+        ipc.config.socketRoot = '';  // Not used on Windows
+    } else {
+        // Unix-specific configuration
+        ipc.config.socketRoot = '/tmp/';
+        ipc.config.appspace = '';
+    }
+
     // Mark as initialized
     global.__n8nDiscordIPCInitialized = true;
-    console.log('IPC configuration initialized');
+    console.log('IPC configuration initialized for ' + (isWindows ? 'Windows' : 'Unix') + ' platform');
 }
 
 // Maintain a cache of active connections to avoid creating multiple connections to the same server
@@ -57,13 +76,17 @@ export const connection = (credentials: ICredentials): Promise<string> => {
         // Generate a credential hash for this connection
         const credHash = getCredentialHash(credentials.clientId, credentials.token);
 
-        // Use the fixed socket path for Ubuntu 22.04
+        // Get platform-specific socket path
         const socketPath = getSocketPath();
+        const isWindows = process.platform === 'win32';
 
-        console.log(`IPC Client Configuration: Socket Root: ${ipc.config.socketRoot}, Socket Path: ${socketPath}`);
+        console.log(`IPC Client Configuration: Platform: ${isWindows ? 'Windows' : 'Unix'}, Socket Path: ${socketPath}`);
 
-        // Set timeout for connection attempt
-        const timeout = setTimeout(() => reject(new Error('Connection timeout after 15 seconds')), 15000);
+        // Set timeout for connection attempt - increase from 15s to 30s to allow more time for connection
+        const timeout = setTimeout(() => {
+            console.error('Connection timed out - checking if Discord bot server is running...');
+            reject(new Error(`Connection timeout after 30 seconds. Please ensure the Discord bot server is running at ${socketPath}`));
+        }, 30000);
 
         // Check if we already have an active connection
         if (connectionCache[credHash]) {
@@ -72,71 +95,105 @@ export const connection = (credentials: ICredentials): Promise<string> => {
             return resolve('already');
         }
 
-        ipc.connectTo('bot', socketPath, () => {
-            console.log('Attempting to connect to IPC server at:', socketPath);
+        try {
+            ipc.connectTo('bot', socketPath, () => {
+                console.log('Attempting to connect to IPC server at:', socketPath);
 
-            ipc.of.bot.on('connect', () => {
-                console.log('Successfully connected to IPC server');
-                // Mark connection as active in cache
-                connectionCache[credHash] = true;
-                // Send credentials along with the credential hash
-                ipc.of.bot.emit('credentials', { credentials, credentialHash: credHash });
-            });
-
-            ipc.of.bot.on('credentials', (data: string) => {
-                clearTimeout(timeout);
-
-                if (data === 'error') {
+                // Handle connection error
+                ipc.of.bot.on('error', (err: any) => {
+                    console.error('IPC connection error:', err);
                     connectionCache[credHash] = false;
-                    reject(new Error('Invalid credentials'));
-                } else if (data === 'missing') {
+                    clearTimeout(timeout);
+
+                    if (isWindows && err.code === 'ENOENT') {
+                        reject(new Error(`IPC server not found at ${socketPath}. Ensure Discord bot is running on Windows.`));
+                    } else {
+                        reject(new Error(`IPC error: ${err.message || 'Unknown error'}`));
+                    }
+                });
+
+                ipc.of.bot.on('connect', () => {
+                    console.log('Successfully connected to IPC server');
+                    // Mark connection as active in cache
+                    connectionCache[credHash] = true;
+                    // Send credentials along with the credential hash
+                    ipc.of.bot.emit('credentials', { credentials, credentialHash: credHash });
+                });
+
+                ipc.of.bot.on('credentials', (data: string) => {
+                    clearTimeout(timeout);
+
+                    if (data === 'error') {
+                        connectionCache[credHash] = false;
+                        reject(new Error('Invalid credentials'));
+                    } else if (data === 'missing') {
+                        connectionCache[credHash] = false;
+                        reject(new Error('Token or clientId missing'));
+                    } else if (data === 'login') {
+                        reject(new Error('Already logging in'));
+                    } else if (data === 'different') {
+                        resolve('Already logging in with different credentials');
+                    } else {
+                        resolve(data); // ready / already
+                    }
+                });
+
+                ipc.of.bot.on('disconnect', () => {
+                    console.log(`IPC connection disconnected for ${credHash}`);
                     connectionCache[credHash] = false;
-                    reject(new Error('Token or clientId missing'));
-                } else if (data === 'login') {
-                    reject(new Error('Already logging in'));
-                } else if (data === 'different') {
-                    resolve('Already logging in with different credentials');
-                } else {
-                    resolve(data); // ready / already
-                }
+                });
             });
-
-            ipc.of.bot.on('error', (err: any) => {
-                console.error('IPC connection error:', err);
-                connectionCache[credHash] = false;
-                clearTimeout(timeout);
-                reject(new Error(`IPC error: ${err.message || 'Unknown error'}`));
-            });
-
-            ipc.of.bot.on('disconnect', () => {
-                console.log(`IPC connection disconnected for ${credHash}`);
-                connectionCache[credHash] = false;
-            });
-        });
+        } catch (error) {
+            clearTimeout(timeout);
+            console.error('Error establishing IPC connection:', error);
+            reject(new Error(`Failed to establish IPC connection: ${error.message}`));
+        }
     });
 };
 
 
 // Helper function to create a reusable IPC connection
 function createIPCConnection(credentialHash: string): Promise<any> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         // Initialize IPC configuration
         initializeIPC();
 
         const socketPath = getSocketPath();
+        const isWindows = process.platform === 'win32';
 
-        // No need to re-configure IPC here since we've initialized it already
-        ipc.connectTo('bot', socketPath, () => {
-            ipc.of.bot.on('connect', function() {
-                console.log(`IPC connection established for request with credential hash ${credentialHash}`);
-                resolve(ipc.of.bot);
-            });
+        console.log(`Creating IPC connection: Platform: ${isWindows ? 'Windows' : 'Unix'}, Socket Path: ${socketPath}`);
 
-            ipc.of.bot.on('error', function(err: any) {
-                console.error('IPC connection error in helper function:', err);
-                resolve(null);
+        // Set a timeout to prevent hanging indefinitely
+        const connectionTimeout = setTimeout(() => {
+            console.error(`IPC connection timed out for request with credential hash ${credentialHash}`);
+            resolve(null);
+        }, 10000);
+
+        try {
+            // No need to re-configure IPC here since we've initialized it already
+            ipc.connectTo('bot', socketPath, () => {
+                ipc.of.bot.on('connect', function() {
+                    clearTimeout(connectionTimeout);
+                    console.log(`IPC connection established for request with credential hash ${credentialHash}`);
+                    resolve(ipc.of.bot);
+                });
+
+                ipc.of.bot.on('error', function(err: any) {
+                    clearTimeout(connectionTimeout);
+                    console.error('IPC connection error in helper function:', err);
+
+                    if (isWindows && err.code === 'ENOENT') {
+                        console.error(`Named pipe not found at ${socketPath}. Ensure Discord bot is running on Windows.`);
+                    }
+
+                    resolve(null);
+                });
             });
-        });
+        } catch (error) {
+            clearTimeout(connectionTimeout);
+            console.error(`Error creating IPC connection: ${error.message}`);
+            resolve(null);
+        }
     });
 }
 

@@ -61,7 +61,7 @@ export default function (): void {
     // Choose socket path based on operating system
     // Windows uses named pipes, Unix-like systems use Unix domain sockets
     const socketPath = os.platform() === 'win32'
-        ? '\\\\.\\pipe\\n8n-discord-bot'  // Windows named pipe
+        ? '\\\\.\\pipe\\discord-bot'  // Windows named pipe - must match helper.ts
         : '/tmp/bot';                     // Unix domain socket
 
     console.log(`Using socket path: ${socketPath}`);
