@@ -8,6 +8,13 @@ interface IBotInstance {
     parameters: any;
 }
 
+// Define a type for trigger node information
+interface ITriggerNode {
+    parameters: any;
+    credentialHash: string;
+    active: boolean;
+}
+
 const settings: {
     testMode: boolean;
     // Store bot instances by credential hash (unique identifier for each credential set)
@@ -16,10 +23,7 @@ const settings: {
     };
     // Store trigger nodes with their associated credential hash
     triggerNodes: {
-        [nodeId: string]: {
-            parameters: any;
-            credentialHash: string;
-        }
+        [nodeId: string]: ITriggerNode
     };
 } = {
     testMode: false,

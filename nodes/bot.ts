@@ -260,6 +260,14 @@ export default function (): void {
                                 processedContent = messageContent.replace(mentionRegex, '').trim();
                             }
 
+                            // Before emitting message data, check if the workflow is still active
+                            // We store this in the triggerNodes object
+                            const nodeInfo = settings.triggerNodes[nodeId];
+                            if (!nodeInfo?.active) {
+                                console.log(`Skipping trigger for inactive workflow node: ${nodeId}`);
+                                return;
+                            }
+
                             console.log(`Trigger activated for node ${nodeId}. Pattern: ${pattern}, botMention: ${botMention}, hasImageAttachments: ${hasImageAttachments}, guild: ${message.guild?.name || 'DM'} (${message.guild?.id || 'none'})`);
 
                             // Emit the message data specifically to this node
@@ -490,7 +498,7 @@ export default function (): void {
 
         ipc.server.on('triggerNodeRegistered', function(data, socket) {
             try {
-                const { nodeId, parameters, credentialHash } = data;
+                const { nodeId, parameters, credentialHash, active } = data;
                 if (!nodeId || !credentialHash) {
                     console.error('Missing required data for node registration');
                     return;
@@ -500,6 +508,7 @@ export default function (): void {
                 settings.triggerNodes[nodeId] = {
                     parameters,
                     credentialHash,
+                    active: active || false,
                 };
 
                 console.log(`Trigger node ${nodeId} registered successfully with credential hash ${credentialHash}`);

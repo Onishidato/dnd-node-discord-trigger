@@ -92,6 +92,9 @@ export class DiscordTrigger implements INodeType {
         },
     };
 
+    // Map to keep track of active message handlers for each node
+    private static messageHandlers: Map<string, Function> = new Map();
+
     async trigger(this: ITriggerFunctions): Promise<ITriggerResponse> {
         try {
             const credentials = await this.getCredentials('discordBotTriggerApi') as unknown as ICredentials;
@@ -101,19 +104,22 @@ export class DiscordTrigger implements INodeType {
                 throw new NodeOperationError(this.getNode(), "Discord bot token is required");
             }
 
+            const nodeId = this.getNode().id;
+            const isWorkflowActive = this.getWorkflow().active;
+
             // Generate credential hash from bot token and client ID
             const credentialHash = getCredentialHash(credentials.clientId, credentials.token);
 
             // Establish connection with proper error handling
             try {
                 await connection(credentials);
-                console.log(`Connection established for node ${this.getNode().id}`);
+                console.log(`Connection established for node ${nodeId}`);
             } catch (error) {
-                console.error(`Connection error for node ${this.getNode().id}:`, error);
+                console.error(`Connection error for node ${nodeId}:`, error);
                 throw new NodeOperationError(this.getNode(), `Failed to connect to Discord bot: ${error.message}`);
             }
 
-            // Setup message listener for this trigger node
+            // Set up message listener for this trigger node
             const setupMessageListener = () => {
                 return new Promise<void>((resolve) => {
                     // Store a reference to the ITriggerFunctions
@@ -125,93 +131,143 @@ export class DiscordTrigger implements INodeType {
                         parameters[key] = this.getNodeParameter(key, '') as any;
                     });
 
-                    console.log(`Registering trigger node ${this.getNode().id} with parameters:`, parameters);
+                    console.log(`Registering trigger node ${nodeId} with parameters:`, parameters);
 
-                    // Register this node with the bot
+                    // First check if there's an existing handler for this node and remove it
+                    if (DiscordTrigger.messageHandlers.has(nodeId)) {
+                        try {
+                            const oldHandler = DiscordTrigger.messageHandlers.get(nodeId);
+                            if (oldHandler && ipc.of && ipc.of.bot) {
+                                ipc.of.bot.off('messageCreate', oldHandler);
+                                console.log(`Removed previous message handler for node ${nodeId}`);
+                            }
+                        } catch (error) {
+                            console.error(`Error removing previous message handler for node ${nodeId}:`, error);
+                        }
+                    }
+
+                    // Register this node with the bot, including its active status
                     ipc.of.bot.emit('triggerNodeRegistered', {
                         parameters,
-                        active: this.getWorkflow().active,
+                        active: isWorkflowActive,
                         credentialHash: credentialHash,
-                        nodeId: this.getNode().id,
+                        nodeId: nodeId,
                     });
 
-                    // Set up message handler for this node
-                    ipc.of.bot.on('messageCreate', function(this: any, { message, author, nodeId, messageReference, referenceAuthor }: any) {
-                        if (self.getNode().id === nodeId) {
-                            // Debug logging to check message content
-                            console.log(`Received message for node ${nodeId}`);
+                    // Create new message handler function
+                    const messageHandler = function(this: any, { message, author, nodeId: msgNodeId, messageReference, referenceAuthor }: any) {
+                        // Only process messages intended for this node
+                        if (msgNodeId !== nodeId) return;
 
-                            // Check if any attachments are images
-                            const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
-                                const contentType = attachment.contentType?.toLowerCase() || '';
-                                return contentType.startsWith('image/');
-                            }) : [];
+                        // Debug logging
+                        console.log(`Received message for node ${msgNodeId}`);
 
-                            // Format image data for AI services
-                            const geminiReadyImages = imageAttachments.map((attachment: any) => ({
+                        // Check if any attachments are images
+                        const imageAttachments = message.attachments ? Array.from(message.attachments.values()).filter((attachment: any) => {
+                            const contentType = attachment.contentType?.toLowerCase() || '';
+                            return contentType.startsWith('image/');
+                        }) : [];
+
+                        // Format image data for AI services
+                        const geminiReadyImages = imageAttachments.map((attachment: any) => ({
+                            url: attachment.url,
+                            mimeType: attachment.contentType,
+                            width: attachment.width,
+                            height: attachment.height,
+                            size: attachment.size
+                        }));
+
+                        // Prepare message data to emit
+                        const messageCreateOptions = {
+                            id: message.id,
+                            content: message.content,
+                            processedContent: message.processedContent || message.content,
+                            channelId: message.channelId,
+                            authorId: author.id,
+                            authorName: author.username,
+                            timestamp: message.createdTimestamp,
+                            listenValue: self.getNodeParameter('value', ''),
+                            authorIsBot: author.bot || author.system,
+                            referenceId: null,
+                            referenceContent: null,
+                            referenceAuthorId: null,
+                            referenceAuthorName: null,
+                            referenceTimestamp: null,
+                            hasAttachments: message.attachments?.size > 0,
+                            attachments: message.attachments ? Array.from(message.attachments.values()).map((attachment: any) => ({
+                                id: attachment.id,
                                 url: attachment.url,
-                                mimeType: attachment.contentType,
+                                proxyUrl: attachment.proxyURL,
+                                filename: attachment.name,
+                                contentType: attachment.contentType,
+                                size: attachment.size,
                                 width: attachment.width,
                                 height: attachment.height,
-                                size: attachment.size
-                            }));
+                                description: attachment.description,
+                                ephemeral: attachment.ephemeral,
+                            })) : [],
+                            hasImages: imageAttachments.length > 0,
+                            imageCount: imageAttachments.length,
+                            geminiImages: geminiReadyImages,
+                            geminiPromptTemplate: imageAttachments.length > 0 ?
+                                "Analyze this image and describe what you see in detail." :
+                                "No images attached to analyze."
+                        };
 
-                            // Prepare message data to emit
-                            const messageCreateOptions = {
-                                id: message.id,
-                                content: message.content,
-                                processedContent: message.processedContent || message.content,
-                                channelId: message.channelId,
-                                authorId: author.id,
-                                authorName: author.username,
-                                timestamp: message.createdTimestamp,
-                                listenValue: self.getNodeParameter('value', ''),
-                                authorIsBot: author.bot || author.system,
-                                referenceId: null,
-                                referenceContent: null,
-                                referenceAuthorId: null,
-                                referenceAuthorName: null,
-                                referenceTimestamp: null,
-                                hasAttachments: message.attachments?.size > 0,
-                                attachments: message.attachments ? Array.from(message.attachments.values()).map((attachment: any) => ({
-                                    id: attachment.id,
-                                    url: attachment.url,
-                                    proxyUrl: attachment.proxyURL,
-                                    filename: attachment.name,
-                                    contentType: attachment.contentType,
-                                    size: attachment.size,
-                                    width: attachment.width,
-                                    height: attachment.height,
-                                    description: attachment.description,
-                                    ephemeral: attachment.ephemeral,
-                                })) : [],
-                                hasImages: imageAttachments.length > 0,
-                                imageCount: imageAttachments.length,
-                                geminiImages: geminiReadyImages,
-                                geminiPromptTemplate: imageAttachments.length > 0 ?
-                                    "Analyze this image and describe what you see in detail." :
-                                    "No images attached to analyze."
-                            };
-
-                            // Add reference message data if present
-                            if (messageReference) {
-                                messageCreateOptions.referenceId = messageReference.id;
-                                messageCreateOptions.referenceContent = messageReference.content;
-                                messageCreateOptions.referenceAuthorId = referenceAuthor.id;
-                                messageCreateOptions.referenceAuthorName = referenceAuthor.username;
-                                messageCreateOptions.referenceTimestamp = messageReference.createdTimestamp;
-                            }
-
-                            // Emit message data to trigger workflow execution
-                            self.emit([
-                                self.helpers.returnJsonArray(messageCreateOptions),
-                            ]);
+                        // Add reference message data if present
+                        if (messageReference) {
+                            messageCreateOptions.referenceId = messageReference.id;
+                            messageCreateOptions.referenceContent = messageReference.content;
+                            messageCreateOptions.referenceAuthorId = referenceAuthor.id;
+                            messageCreateOptions.referenceAuthorName = referenceAuthor.username;
+                            messageCreateOptions.referenceTimestamp = messageReference.createdTimestamp;
                         }
-                    });
+
+                        // Emit message data to trigger workflow execution
+                        self.emit([
+                            self.helpers.returnJsonArray(messageCreateOptions),
+                        ]);
+                    };
+
+                    // Store the new handler in our map
+                    DiscordTrigger.messageHandlers.set(nodeId, messageHandler);
+
+                    // Set up message handler for this node
+                    ipc.of.bot.on('messageCreate', messageHandler);
+
+                    // Set up a listener for workflow status changes
+                    const updateWorkflowActive = async () => {
+                        try {
+                            // Check if the workflow is still active directly from n8n API
+                            const isActive = await checkWorkflowStatus(
+                                credentials.baseUrl,
+                                credentials.apiKey,
+                                String(self.getWorkflow().id)
+                            );
+
+                            // If status changed, update it in the bot
+                            ipc.of.bot.emit('triggerNodeRegistered', {
+                                parameters,
+                                active: isActive,
+                                credentialHash: credentialHash,
+                                nodeId: nodeId,
+                            });
+
+                            console.log(`Updated workflow active status for node ${nodeId}: ${isActive}`);
+
+                            // Schedule another check after a delay
+                            setTimeout(updateWorkflowActive, 30000); // Check every 30 seconds
+                        } catch (error) {
+                            console.error(`Error checking workflow status for node ${nodeId}:`, error);
+                        }
+                    };
+
+                    // Start periodic workflow status checks
+                    updateWorkflowActive();
 
                     // Handle connection errors and disconnects
                     ipc.of.bot.on('error', function(this: any, err: any) {
-                        console.error(`IPC error in node ${self.getNode().id}:`, err);
+                        console.error(`IPC error in node ${nodeId}:`, err);
                     });
 
                     resolve();
@@ -225,7 +281,17 @@ export class DiscordTrigger implements INodeType {
             return {
                 closeFunction: async () => {
                     try {
-                        console.log(`Cleaning up trigger node ${this.getNode().id}`);
+                        console.log(`Cleaning up trigger node ${nodeId}`);
+
+                        // Remove the message handler from our map and from ipc
+                        if (DiscordTrigger.messageHandlers.has(nodeId)) {
+                            const handler = DiscordTrigger.messageHandlers.get(nodeId);
+                            if (handler && ipc.of && ipc.of.bot) {
+                                ipc.of.bot.off('messageCreate', handler);
+                            }
+                            DiscordTrigger.messageHandlers.delete(nodeId);
+                            console.log(`Removed message handler for node ${nodeId}`);
+                        }
 
                         // Check if the workflow is still active
                         let isActive = false;
@@ -241,28 +307,31 @@ export class DiscordTrigger implements INodeType {
                             isActive = false;
                         }
 
+                        // Update the node's active status in the bot
+                        ipc.of.bot.emit('triggerNodeRegistered', {
+                            parameters: {},
+                            active: false, // Always set to false when cleaning up
+                            credentialHash: credentialHash,
+                            nodeId: nodeId,
+                        });
+
                         // Clean up this node with the bot
-                        await cleanupBot(this.getNode().id, credentials);
+                        await cleanupBot(nodeId, credentials);
 
                         // Only disconnect if the workflow is not active anymore or if this is a manual test
                         if (!isActive || this.getActivationMode() === 'manual') {
                             console.log(`Workflow ${this.getWorkflow().id} is no longer active or was a manual test. Disconnecting.`);
 
-                            // Since node-ipc doesn't provide a standard way to remove specific listeners without references,
-                            // we'll just disconnect the client entirely which also removes all listeners
-                            if (ipc.of && ipc.of.bot) {
-                                try {
-                                    // Simply disconnect from the IPC server
-                                    // This will automatically clean up all event listeners
-                                    ipc.disconnect('bot');
-                                    console.log(`Disconnected from IPC server for node ${this.getNode().id}`);
-                                } catch (error) {
-                                    console.error('Error disconnecting from IPC server:', error);
-                                }
+                            try {
+                                // Disconnect from the IPC server
+                                ipc.disconnect('bot');
+                                console.log(`Disconnected from IPC server for node ${nodeId}`);
+                            } catch (error) {
+                                console.error('Error disconnecting from IPC server:', error);
                             }
                         }
                     } catch (error) {
-                        console.error(`Error in trigger node cleanup for ${this.getNode().id}:`, error);
+                        console.error(`Error in trigger node cleanup for ${nodeId}:`, error);
                     }
                 },
             };
