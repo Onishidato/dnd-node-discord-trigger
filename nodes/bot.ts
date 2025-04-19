@@ -754,13 +754,17 @@ export default function (): void {
 
                     // Also update in the bot instance if available
                     if (credHash && settings.botInstances[credHash]) {
-                        const botInstance = settings.botInstances[credHash];
-                        // Check and initialize triggerNodes if it doesn't exist
-                        if (!(botInstance as any).triggerNodes) {
-                            (botInstance as any).triggerNodes = {};
+                        // Create a temporary variable with type assertion
+                        const botInstance = settings.botInstances[credHash] as any;
+
+                        // Initialize triggerNodes if it doesn't exist
+                        if (!botInstance.triggerNodes) {
+                            botInstance.triggerNodes = {};
                         }
-                        (botInstance as any).triggerNodes[nodeId] = {
-                            ...(settings.triggerNodes[nodeId] as any),
+
+                        // Now set the node data
+                        botInstance.triggerNodes[nodeId] = {
+                            ...settings.triggerNodes[nodeId],
                             active
                         };
                     }
