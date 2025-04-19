@@ -568,7 +568,10 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                 resolve(null);
             }, 10000);
 
+            // Create a unique ID for this request with a timestamp to avoid conflicts
+            const requestId = `${type}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
             let ipcClient: any = null;
+
             try {
                 // Get IPC connection with a unique ID
                 ipcClient = await createIPCConnection(credHash);
@@ -578,10 +581,16 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                     return resolve(null);
                 }
 
-                // Set up response handler
+                // Set up response handler with the unique ID to avoid event conflicts
+                // Add request ID to the event name to avoid conflicts with other parallel requests
+                const responseEventName = `callback:${type}:${requestId}`;
+
                 const responseHandler = (data: any) => {
                     clearTimeout(timeout);
-                    // Remove the listener to prevent memory leaks
+                    // Remove the specific listener for this request
+                    ipcClient.off(responseEventName, responseHandler);
+
+                    // Also listen for the generic callback which some handlers might use
                     ipcClient.off(`callback:${type}`, responseHandler);
 
                     // Disconnect after receiving response
@@ -596,6 +605,8 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                     resolve(data);
                 };
 
+                // Listen both for the specific response event and the general one
+                ipcClient.on(responseEventName, responseHandler);
                 ipcClient.on(`callback:${type}`, responseHandler);
 
                 // Add a timeout handler to ensure connection gets cleaned up
@@ -611,10 +622,11 @@ export const ipcRequest = async (type: string, parameters: any, credentials: ICr
                     }
                 }, 12000); // Slightly longer than the response timeout
 
-                // Send the request
+                // Send the request with the unique requestId to help the server route responses correctly
                 ipcClient.emit(type, {
                     nodeParameters: parameters,
-                    credentialHash: credHash
+                    credentialHash: credHash,
+                    requestId: requestId
                 });
 
                 // Clear the connection timeout when response timeout is cleared
