@@ -22,6 +22,18 @@ import * as os from 'os';
 // Add type declaration for settings
 import settings from './settings';
 declare module './settings' {
+    interface IBotInstance {
+        id: string;
+        client: Client;
+        triggerNodes: { [key: string]: ITriggerNode };
+        ready: boolean;
+        login: boolean;
+        clientId: string;
+        token: string;
+        baseUrl: string;
+        parameters: any;
+    }
+
     interface Settings {
         triggerNodes: { [key: string]: ITriggerNode };
         botInstances: { [key: string]: IBotInstance };
@@ -94,8 +106,8 @@ interface IBotInstance {
     login: boolean;
     clientId: string;
     token: string;
-    baseUrl: string; // Changed from optional to required to match settings.ts
-    parameters: any; // Changed from optional to required to match implementation
+    baseUrl: string;
+    parameters: any;
 }
 
 // Store clients for different Discord accounts
@@ -742,10 +754,12 @@ export default function (): void {
 
                     // Also update in the bot instance if available
                     if (credHash && settings.botInstances[credHash]) {
-                        if ((!settings.botInstances[credHash] as any).triggerNodes) {
-                            (settings.botInstances[credHash] as any).triggerNodes = {};
+                        const botInstance = settings.botInstances[credHash];
+                        // Check and initialize triggerNodes if it doesn't exist
+                        if (!(botInstance as any).triggerNodes) {
+                            (botInstance as any).triggerNodes = {};
                         }
-                        (settings.botInstances[credHash] as any).triggerNodes[nodeId] = {
+                        (botInstance as any).triggerNodes[nodeId] = {
                             ...(settings.triggerNodes[nodeId] as any),
                             active
                         };
