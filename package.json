@@ -1,6 +1,6 @@
 {
   "name": "@onishidato/n8n-nodes-dnd-discord-trigger",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "A node that triggers a workflow whenever a message from discord is sent.",
   "keywords": [
     "n8n",

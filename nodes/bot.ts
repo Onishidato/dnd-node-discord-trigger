@@ -1,5 +1,5 @@
 import {
-    Client, GatewayIntentBits, ChannelType, Guild,
+    Client, GatewayIntentBits, ChannelType,
     EmbedBuilder,
     ColorResolvable,
     AttachmentBuilder,
@@ -901,7 +901,7 @@ export default function (): void {
             }
         });
 
-        ipc.server.on('list:guilds', function(data, socket) {
+        ipc.server.on('list:guilds', async function(data, socket) {
             try {
                 const { credentialHash } = data;
                 if (!credentialHash) {
@@ -935,17 +935,40 @@ export default function (): void {
                 } else {
                     console.log('Guilds found:');
                     client.guilds.cache.forEach(guild => {
-                        console.log(`- ${guild.name} (${guild.id})`);
+                        console.log(`- ${guild.name || 'Loading...'} (${guild.id})`);
                     });
                 }
                 console.log('===============================');
 
-                const guildsList = client.guilds.cache.map((guild: Guild) => {
-                    return {
-                        name: guild.name,
-                        value: guild.id,
-                    };
-                });
+                // Check if guilds have names, and if not, try fetching them
+                const guildsList = [];
+                for (const [id, guild] of client.guilds.cache) {
+                    let guildName = guild.name;
+
+                    // If the guild name is undefined, try to fetch it directly
+                    if (!guildName) {
+                        try {
+                            // First try to use the available guild object to fetch its name
+                            if (guild.fetch) {
+                                const updatedGuild = await guild.fetch();
+                                guildName = updatedGuild.name;
+                            }
+                            // If that fails, try fetching by ID
+                            if (!guildName && client.guilds.fetch) {
+                                const fetchedGuild = await client.guilds.fetch(id);
+                                guildName = fetchedGuild.name;
+                            }
+                        } catch (fetchError) {
+                            console.error(`Error fetching guild ${id} details:`, fetchError);
+                            guildName = `Server ${id}`;  // Fallback name
+                        }
+                    }
+
+                    guildsList.push({
+                        name: guildName || `Server ${id}`,  // Provide a fallback name
+                        value: id,
+                    });
+                }
 
                 ipc.server.emit(socket, 'list:guilds', guildsList);
             } catch (e) {
