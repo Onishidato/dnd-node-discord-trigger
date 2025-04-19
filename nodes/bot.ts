@@ -732,6 +732,8 @@ export default function (): void {
         // Handle update trigger node status
         ipc.server.on('updateTriggerNodeStatus', function(data, socket) {
             try {
+                console.log(`Received updateTriggerNodeStatus request with data:`, JSON.stringify(data));
+
                 // Support both data formats for consistency
                 // Format 1: { nodeParameters: { nodeId, active }, credentialHash: '...' }
                 // Format 2: { nodeId: '...', active: true/false }
@@ -741,6 +743,7 @@ export default function (): void {
 
                 if (!nodeId || typeof active !== 'boolean') {
                     console.error('Missing nodeId or active status in updateTriggerNodeStatus event');
+                    // Send response immediately to prevent timeout
                     ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
                         success: false,
                         error: 'Missing nodeId or active status'
@@ -748,6 +751,7 @@ export default function (): void {
                     return;
                 }
 
+                // Update local status immediately to avoid race conditions
                 if (settings.triggerNodes[nodeId]) {
                     settings.triggerNodes[nodeId].active = active;
                     console.log(`Updated trigger node ${nodeId} status to ${active}`);
@@ -769,6 +773,7 @@ export default function (): void {
                         };
                     }
 
+                    // Send response immediately to prevent timeout
                     ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
                         success: true,
                         nodeId: nodeId,
@@ -776,6 +781,7 @@ export default function (): void {
                     });
                 } else {
                     console.error(`Trigger node ${nodeId} not found`);
+                    // Send response immediately to prevent timeout
                     ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
                         success: false,
                         error: `Trigger node ${nodeId} not found`
@@ -783,6 +789,7 @@ export default function (): void {
                 }
             } catch (e) {
                 console.error(`Error handling updateTriggerNodeStatus:`, e);
+                // Send response even in case of error to prevent timeout
                 ipc.server.emit(socket, 'updateTriggerNodeStatus:response', {
                     success: false,
                     error: String(e)
